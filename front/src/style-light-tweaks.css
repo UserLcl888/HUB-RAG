@@ -1,0 +1,325 @@
+/*
+ * 主题精修层（手工维护，不参与 scripts/build-light-theme.mjs 的自动生成）。
+ *
+ * 为什么需要它：生成器只做"逐色映射"（保留色相、翻转明度），会原样保留深色主题的
+ * 渐变与半透明。深色那套蓝灰面（#111e28 / #13222d / #121e29…）映射出来就是浅蓝灰
+ * （#e0e9f0 / #dce6ee…），放在干净的白底上会显得发灰、发脏。
+ * 所以这里把主要"面"统一压成白色/近白 + 细边框，只保留品牌绿作为强调色。
+ *
+ * 文件末尾另附"知识图谱/文档审核"两页的完整主题色板（深色 + 白色），
+ * 那是这两页唯一的颜色来源——它们不做明度翻转，理由见该段注释。
+ *
+ * 加载顺序：style.css → style-light.css → 本文件（见 main.ts）。
+ */
+
+/* 页面底色与环境光：白底保持干净，不再铺蓝绿晕 */
+html[data-theme="white"] body{background:#f6f8fa}
+html[data-theme="white"] .app-shell:before{opacity:.07}
+
+/* 主按钮：品牌绿由生成器原样保留（两套主题同一个绿），这里只调白底上的阴影柔度 */
+
+/* 顶部工作区按钮（政策文件 / 历史对话 / 新建会话） */
+html[data-theme="white"] .workspace-header button{background:#fff;border-color:#e2e8ee;color:#3f4d55}
+html[data-theme="white"] .workspace-header button:hover{background:#f3faf7;border-color:#a5d9c3;color:#1b2521}
+
+/* 侧边栏 */
+html[data-theme="white"] .workspace-sidebar{border-right-color:#e8eef2}
+html[data-theme="white"] .sidebar-tip{background:#f4f9f7;border-color:#e0ebe6;color:#6b7f80}
+
+/* 聊天输入区 */
+html[data-theme="white"] .chat-composer{
+  border-color:#e2e8ee;
+  background:#fff;
+  box-shadow:0 10px 26px #0f223318;
+}
+html[data-theme="white"] .chat-composer:focus-within{border-color:#8ed7bb;box-shadow:0 10px 26px #12a97c1f}
+
+/* 卡片与面板：统一白面 + 细边框 */
+html[data-theme="white"] .file-card,
+html[data-theme="white"] .library-toolbar,
+html[data-theme="white"] .panel,
+html[data-theme="white"] .search-box,
+html[data-theme="white"] .knowledge-cta,
+html[data-theme="white"] .bottom-callout{background:#fff;border-color:#e5ebef}
+html[data-theme="white"] .file-card:hover{background:#f8fbfa;border-color:#cfe4d8}
+
+/* 首页热门问题 / 标签 / 品牌块 */
+html[data-theme="white"] .home-hot-item{background:#fff}
+html[data-theme="white"] .home-hot-item:hover{background:#f7fbf9}
+html[data-theme="white"] .home-hot-item.is-active{background:#eefaf4}
+html[data-theme="white"] .home-tag{background:#fff}
+html[data-theme="white"] .welcome-mark{background:linear-gradient(145deg,#dcf3ea,#eaf8f3)}
+
+/* 引用卡片 */
+html[data-theme="white"] .source-card{background:#fbfdfc}
+
+/* 弹窗 */
+html[data-theme="white"] .document-picker-modal,
+html[data-theme="white"] .upload-modal{
+  border-color:#e4eaee;
+  background:#fff;
+  box-shadow:0 24px 70px #0f22331f;
+}
+html[data-theme="white"] .document-picker-item{background:#fff;border-color:#e6ecef}
+html[data-theme="white"] .document-picker-item.is-selected{background:#eefaf4;border-color:#8fd9bd}
+html[data-theme="white"] .toast-message{background:#fff}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 知识图谱（KnowledgeGraph.vue）与文档审核（DocumentReview.vue）的主题色板
+ *
+ * 这两页的颜色全部走 --kg-* / --rv-* 变量，组件里只留结构与尺寸，不写字面色值；
+ * 两套主题的取值都集中在本文件（生成器识别到这些变量会整条跳过，见 build-light-theme.mjs）。
+ *
+ * 为什么不让生成器翻转：机械的"明度取反"会把琥珀、紫罗兰节点翻成浅灰圈，
+ * 白色标签叠在浅底上几乎看不见，画布也从深空色糊成脏灰蓝。浅色主题需要的是
+ * 另一套明暗关系——白面、深字、浅底节点、品牌绿与琥珀做强调，而不是深色值的数学补集。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 深色主题（默认；html 上没有 data-theme="white" 时生效）── */
+html:not([data-theme="white"]) .graph-page {
+  --kg-surface: linear-gradient(145deg, #172c33, #101d29);
+  --kg-border: #263b46;
+  --kg-canvas: linear-gradient(155deg, #13262f, #0d1a26 62%, #0b1620);
+  --kg-canvas-border: #2a4a4f;
+  --kg-shadow: 0 17px 48px #0002;
+  --kg-halo: #2bd49e;
+  --kg-halo-opacity: .19;
+  --kg-halo-opacity-mid: .07;
+  --kg-grid-dot: #8cbaa9;
+  --kg-grid-dot-opacity: .16;
+  --kg-grid-plane-opacity: .4;
+  --kg-orbit: #55c9a4;
+  --kg-edge: #4ca88c;
+  --kg-edge-active: #7be5bc;
+  --kg-related-edge: #6296a2;
+  --kg-canvas-title: #c8d8d8;
+  --kg-canvas-meta: #6d848e;
+  --kg-live-dot: #51d9aa;
+  --kg-live-glow: #42d09a;
+  --kg-legend: #8298a0;
+  --kg-legend-core: #60d7a9;
+  --kg-legend-field: #8bb3d1;
+  --kg-legend-edge: #6b9094;
+  --kg-heading: #d9e8e8;
+  --kg-heading-icon: #66d5ac;
+  --kg-demo-border: #356451;
+  --kg-demo-text: #7fe3b9;
+  --kg-detail-surface: linear-gradient(145deg, #17342f, #12272c);
+  --kg-detail-border: #2a4d49;
+  --kg-detail-icon-bg: #245744;
+  --kg-detail-icon: #76e2b6;
+  --kg-detail-category: #83cbaa;
+  --kg-detail-title: #eff6f3;
+  --kg-detail-text: #93aaa8;
+  --kg-detail-rule: #ffffff18;
+  --kg-detail-meta: #9bbab0;
+  --kg-detail-value: #d6eae0;
+  --kg-topic-title: #91a5ae;
+  --kg-chip-bg: #162631;
+  --kg-chip-border: #2a3e49;
+  --kg-chip-text: #9baeb6;
+  --kg-chip-active-bg: #1b4035;
+  --kg-chip-active-border: #3f9b78;
+  --kg-chip-active-text: #c6f3dd;
+  --kg-link: #82deb6;
+  --kg-note: #69808b;
+  --kg-node-core-bg: #163b35;
+  --kg-node-core-border: #4fbf9a;
+  --kg-node-blue-bg: #193745;
+  --kg-node-blue-border: #65afce;
+  --kg-node-violet-bg: #302e49;
+  --kg-node-violet-border: #a297d5;
+  --kg-node-amber-bg: #393428;
+  --kg-node-amber-border: #c4a272;
+  --kg-node-label: #ddf3e9;
+  --kg-node-label-amber: #f3ddb8;
+  --kg-node-label-violet: #e8e2fb;
+  --kg-node-dot: #72dfb4;
+  --kg-node-dot-blue: #85cce4;
+  --kg-node-dot-violet: #c0b2f0;
+  --kg-node-dot-amber: #e8bb83;
+  --kg-node-pulse: #43cba0;
+  --kg-node-pulse-opacity: .08;
+  --kg-node-pulse-active: .18;
+  --kg-node-glow: #51d9a766;
+  --kg-node-glare: #ffffff;
+}
+html:not([data-theme="white"]) .review-page {
+  --rv-surface: linear-gradient(145deg, #132330, #101b27);
+  --rv-card-bg: #111f2a;
+  --rv-border: #263c48;
+  --rv-line: #243945;
+  --rv-hover-bg: #142a2c;
+  --rv-hover-border: #376052;
+  --rv-shadow: 0 15px 42px #0002;
+  --rv-rule: #ffffff0e;
+  --rv-rule-soft: #ffffff0b;
+  --rv-accent: #65d7ac;
+  --rv-eyebrow-muted: #71858e;
+  --rv-title: #edf4f3;
+  --rv-subtitle: #83979f;
+  --rv-ghost-border: #2c4d56;
+  --rv-ghost-text: #9bb6bd;
+  --rv-ghost-hover-border: #3d9377;
+  --rv-ghost-hover-text: #caf1df;
+  --rv-label: #708791;
+  --rv-file-icon-bg: #1e473e;
+  --rv-file-icon: #6cd8ac;
+  --rv-file-title: #e8f2f2;
+  --rv-file-meta: #79909a;
+  --rv-demo-border: #35594e;
+  --rv-demo-text: #75d8ad;
+  --rv-ring-border: #4cd3a1;
+  --rv-ring-glow: inset 0 0 17px #32bb8d2a, 0 0 22px #32bb8d1c;
+  --rv-ring-score: #d7f6e6;
+  --rv-ring-label: #77a894;
+  --rv-heading: #e6f0ef;
+  --rv-count: #718992;
+  --rv-tab-text: #83979f;
+  --rv-tab-count: #607781;
+  --rv-tab-active-bg: #17362c;
+  --rv-tab-active-border: #2e644f;
+  --rv-tab-active-text: #bcefd9;
+  --rv-tab-active-count: #70d6ad;
+  --rv-pass: #61d6a9;
+  --rv-pass-bg: #1d493a;
+  --rv-warn: #e9bd7a;
+  --rv-warn-bg: #4a3b29;
+  --rv-item-title: #d7e4e6;
+  --rv-item-text: #78909a;
+  --rv-status-pass: #6dd3a8;
+  --rv-status-warn: #e7b978;
+  --rv-chevron: #58717c;
+  --rv-side-heading: #cfe2e0;
+  --rv-side-icon: #66d9ae;
+  --rv-advice-title: #d6e5e5;
+  --rv-advice-text: #779099;
+  --rv-foot: #70858d;
+  --rv-foot-value: #96aaa9;
+  --rv-note: #68808a;
+}
+
+/* ── 白色主题 ── */
+html[data-theme="white"] .graph-page {
+  --kg-surface: #fff;
+  --kg-border: #e4ebf1;
+  --kg-canvas: linear-gradient(158deg, #f3faf7 0%, #f7fbfa 44%, #eef6fb 100%);
+  --kg-canvas-border: #e2eae6;
+  --kg-shadow: 0 16px 40px #0f22330f;
+  --kg-halo: #24b98c;
+  /* 白底上光晕要克制：深色主题靠它撑"发光"，浅色主题稍强就变成脏斑 */
+  --kg-halo-opacity: .05;
+  --kg-halo-opacity-mid: .018;
+  --kg-grid-dot: #7fa79c;
+  --kg-grid-dot-opacity: .17;
+  --kg-grid-plane-opacity: .5;
+  --kg-orbit: #17a97b;
+  --kg-edge: #38ab8c;
+  --kg-edge-active: #16a97b;
+  --kg-related-edge: #8aa9b4;
+  --kg-canvas-title: #1e3a33;
+  --kg-canvas-meta: #77909a;
+  --kg-live-dot: #23c48f;
+  --kg-live-glow: #23c48f45;
+  --kg-legend: #647b84;
+  --kg-legend-core: #23c48f;
+  --kg-legend-field: #4a90c4;
+  --kg-legend-edge: #93a9b2;
+  --kg-heading: #16232b;
+  --kg-heading-icon: #12a97c;
+  --kg-demo-border: #b7dccd;
+  --kg-demo-text: #12a97c;
+  --kg-detail-surface: linear-gradient(160deg, #f2faf7, #f3f8fd);
+  --kg-detail-border: #dcefe8;
+  --kg-detail-icon-bg: #d5f0e6;
+  --kg-detail-icon: #12a97c;
+  --kg-detail-category: #128763;
+  --kg-detail-title: #0e1b22;
+  --kg-detail-text: #57676f;
+  --kg-detail-rule: #e4ebe9;
+  --kg-detail-meta: #5d7a75;
+  --kg-detail-value: #17262c;
+  --kg-topic-title: #6b7d86;
+  --kg-chip-bg: #fff;
+  --kg-chip-border: #e4ebe9;
+  --kg-chip-text: #55656d;
+  --kg-chip-active-bg: #e9f8f2;
+  --kg-chip-active-border: #8ed7bd;
+  --kg-chip-active-text: #0c6f52;
+  --kg-link: #12a97c;
+  --kg-note: #7a8b93;
+  --kg-node-core-bg: #0f5a45;
+  --kg-node-core-border: #1fb185;
+  --kg-node-blue-bg: #1c6b93;
+  --kg-node-blue-border: #4f9dc5;
+  --kg-node-violet-bg: #4b3f7d;
+  --kg-node-violet-border: #8a7ac9;
+  --kg-node-amber-bg: #f6ecd8;
+  --kg-node-amber-border: #d3a154;
+  --kg-node-label: #eefaf4;
+  --kg-node-label-amber: #714d0f;
+  --kg-node-label-violet: #ece7fb;
+  --kg-node-dot: #eafff6;
+  --kg-node-dot-blue: #dff1fb;
+  --kg-node-dot-violet: #ece7fb;
+  --kg-node-dot-amber: #b8811c;
+  --kg-node-pulse: #2fd09b;
+  --kg-node-pulse-opacity: .035;
+  --kg-node-pulse-active: .1;
+  --kg-node-glow: #1fb1854d;
+  --kg-node-glare: #ffffff;
+}
+html[data-theme="white"] .review-page {
+  --rv-surface: #fff;
+  --rv-card-bg: #fcfdfe;
+  --rv-border: #e5ebf0;
+  --rv-line: #e9eef3;
+  --rv-hover-bg: #f5fbf8;
+  --rv-hover-border: #cfe7db;
+  --rv-shadow: 0 14px 34px #0f22330d;
+  --rv-rule: #edf1f4;
+  --rv-rule-soft: #f1f4f6;
+  --rv-accent: #12a97c;
+  --rv-eyebrow-muted: #7c8d96;
+  --rv-title: #0f1a20;
+  --rv-subtitle: #62737c;
+  --rv-ghost-border: #dde5eb;
+  --rv-ghost-text: #55666f;
+  --rv-ghost-hover-border: #8ed7bd;
+  --rv-ghost-hover-text: #0f4a37;
+  --rv-label: #7d8e97;
+  --rv-file-icon-bg: #d9f2e9;
+  --rv-file-icon: #12a97c;
+  --rv-file-title: #101a20;
+  --rv-file-meta: #6f828c;
+  --rv-demo-border: #bcdfd0;
+  --rv-demo-text: #12996f;
+  --rv-ring-border: #2ec394;
+  --rv-ring-glow: inset 0 0 16px #2ec3941f, 0 0 18px #2ec3941a;
+  --rv-ring-score: #0d2a22;
+  --rv-ring-label: #5a8a78;
+  --rv-heading: #111b21;
+  --rv-count: #7c8d96;
+  --rv-tab-text: #65767f;
+  --rv-tab-count: #93a3ab;
+  --rv-tab-active-bg: #e9f8f2;
+  --rv-tab-active-border: #a6ddc6;
+  --rv-tab-active-text: #0c5f46;
+  --rv-tab-active-count: #12a97c;
+  --rv-pass: #12a97c;
+  --rv-pass-bg: #dcf4ec;
+  --rv-warn: #a8720f;
+  --rv-warn-bg: #fbeed6;
+  --rv-item-title: #17232b;
+  --rv-item-text: #687a84;
+  --rv-status-pass: #12a97c;
+  --rv-status-warn: #a8720f;
+  --rv-chevron: #95a6ae;
+  --rv-side-heading: #17232b;
+  --rv-side-icon: #12a97c;
+  --rv-advice-title: #17232b;
+  --rv-advice-text: #687a84;
+  --rv-foot: #7b8b94;
+  --rv-foot-value: #46565f;
+  --rv-note: #7a8b93;
+}

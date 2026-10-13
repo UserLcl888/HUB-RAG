@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>农田 AI 助手 · 回答渲染 效果预览（现状 vs 建议）</title>
+<style>
+  :root{
+    --bg:#0b141c; --panel:#111c26; --line:#1b2a34; --text:#d0dce0;
+    --muted:#8ea49f; --mint:#5ecfa6; --mint-dim:#2a6552; --title:#e9f3ef;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:28px 22px 60px; background:var(--bg); color:var(--text);
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,-apple-system,sans-serif;
+  }
+  .page-head{max-width:1600px;margin:0 auto 22px}
+  .page-head h1{margin:0 0 8px;font-size:19px;color:var(--title);font-weight:650}
+  .page-head p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.8}
+  .page-head code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;background:#16232d;border:1px solid #26343e;border-radius:4px;padding:1px 5px;color:#9fe4c6}
+
+  .cols{max-width:1600px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media (max-width:1100px){.cols{grid-template-columns:1fr}}
+
+  .col{background:linear-gradient(145deg,#101b25,#0d1620);border:1px solid #223441;border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+  .col-head{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line);background:#0e1822}
+  .badge{font-size:10.5px;font-weight:700;letter-spacing:.02em;padding:3px 9px;border-radius:999px}
+  .badge.before{background:#4a2a2a;color:#f0a3a3;border:1px solid #6d3838}
+  .badge.after{background:#173b31;color:#7fe3bd;border:1px solid #245844}
+  .col-head span.sub{color:#6d818c;font-size:11px}
+
+  /* 复刻 front/src/style.css 的对话容器尺寸 */
+  .thread{width:100%;padding:18px 16px 26px;flex:1}
+  .conversation-message{display:flex;gap:11px;padding:16px 0;border-bottom:1px solid var(--line)}
+  .conversation-message:last-child{border-bottom:0}
+  .conversation-avatar{width:31px;height:31px;display:grid;place-items:center;flex:none;border-radius:10px;background:#1e5946;color:#67e0b4;font-size:10px}
+  .conversation-message>div{max-width:calc(100% - 44px)}
+  .conversation-author{color:var(--muted);font-size:10px}
+
+  /* ── 现状：完全沿用 front/src/style.css:99 的规则，未加 pre-wrap ── */
+  .before .conversation-message p{margin:6px 0 0;color:var(--text);font-size:12px;line-height:1.8}
+
+  /* ══ 建议：以下规则即计划追加到 front/src/style.css 的最终版本 ══ */
+
+  /* 流式阶段：保留真实换行，不做 Markdown 解析 */
+  .conversation-message p.md-plain{
+    white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;
+  }
+
+  /* 结构化阶段 */
+  .md-body{color:var(--text);font-size:12px;line-height:1.85}
+  .md-body>:first-child{margin-top:0}
+  .md-heading{margin:15px 0 6px;color:var(--title);font-size:13px;font-weight:650;line-height:1.6}
+  .md-paragraph{margin:7px 0 0}
+  .md-list{margin:7px 0 0;padding-left:1.7em}
+  .md-list li{margin:4px 0;padding-left:2px}
+  .md-list li::marker{color:var(--mint)}
+  .md-list .md-list{margin:4px 0 0;padding-left:1.5em}
+  .md-body ul.md-list{list-style:disc}
+  .md-body ul.md-list ul.md-list{list-style:circle}
+  .md-body ul.md-list ul.md-list ul.md-list{list-style:square}
+  .md-body ol.md-list ol.md-list{list-style:lower-alpha}
+  .md-quote{margin:7px 0 0;padding:2px 0 2px 10px;border-left:2px solid var(--mint-dim);color:#a9bdc4}
+  .md-bold{color:#eaf4f0;font-weight:650}
+  .md-italic{font-style:italic}
+  .md-code{padding:1px 4px;border:1px solid #26343e;border-radius:4px;background:#16232d;font-family:ui-monospace,Consolas,monospace;font-size:11px}
+
+  /* 引用来源卡片 */
+  .source-cards{margin-top:14px;padding-top:11px;border-top:1px dashed #24343f}
+  .source-cards-title{color:#7fbfa4;font-size:10px;letter-spacing:.08em;margin-bottom:8px}
+  .source-card{border:1px solid #23443a;border-radius:8px;background:#12211f;padding:9px 11px;margin-bottom:7px}
+  .source-card-head{display:flex;align-items:center;gap:6px;font-size:11px;color:#bfe6d6;font-weight:600}
+  .source-card-page{color:#6fae95;font-weight:500;font-size:10px}
+  .source-card-section{color:#79a695;font-size:10px;margin-top:3px}
+  .source-card-excerpt{margin:5px 0 0;color:#8ea49f;font-size:10.5px;line-height:1.7;
+    display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+
+  .foot{max-width:1600px;margin:22px auto 0;color:#6d818c;font-size:11.5px;line-height:1.9}
+  .foot b{color:#9fe4c6;font-weight:600}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>回答渲染效果预览 · 现状 vs 建议</h1>
+  <p>
+    左右两侧使用<b>完全相同的原始回答文本</b>（含 <code>**加粗**</code>、编号列表、<code>-</code> 子项与真实换行）。
+    左侧按现有 <code>App.vue:533</code> + <code>style.css:99</code> 渲染，右侧按本方案渲染。
+    示例正文依据你提供的截图重建，仅用于核对排版效果。
+  </p>
+</div>
+
+<div class="cols">
+  <section class="col before">
+    <div class="col-head">
+      <span class="badge before">现状</span>
+      <span class="sub">纯文本插值 &lt;p&gt;{{ text }}&lt;/p&gt; · 无 pre-wrap · 无 Markdown 解析</span>
+    </div>
+    <div class="thread">
+      <div class="conversation-message">
+        <span class="conversation-avatar">✦</span>
+        <div>
+          <span class="conversation-author">农田 AI 助手</span>
+          <p id="beforeBody"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="col after">
+    <div class="col-head">
+      <span class="badge after">建议</span>
+      <span class="sub">解析为节点树 + 结构化渲染 · 不使用 v-html</span>
+    </div>
+    <div class="thread">
+      <div class="conversation-message">
+        <span class="conversation-avatar">✦</span>
+        <div>
+          <span class="conversation-author">农田 AI 助手</span>
+          <div id="afterBody"></div>
+          <div id="afterSources"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="foot">
+  <b>注意</b>：右侧的渲染由下方内联脚本中的 <code>parseMarkdown()</code> 实时完成——它就是方案里
+  <code>front/src/utils/markdown.ts</code> 的 JS 版本，因此这份预览同时也是解析器的可行性验证。
+  换行能在传输层完整到达前端这一点，已通过反编译 <code>spring-webmvc-6.2.3</code> 的
+  <code>SseEmitter$SseEventBuilderImpl.data()</code> 字节码确认（Spring 会把 String data 里的
+  <code>\n</code> 替换为 <code>\ndata:</code>）。
+</div>
+
+<script>
+/* ============================================================
+   以下为 front/src/utils/markdown.ts 的 JavaScript 等价实现（预览用）
+   ============================================================ */
+
+const INLINE_RE = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*)/g;
+
+function parseInline(text) {
+  const out = [];
+  let cursor = 0;
+  for (const match of text.matchAll(INLINE_RE)) {
+    const start = match.index ?? 0;
+    if (start > cursor) out.push({ text: text.slice(cursor, start) });
+    const token = match[0];
+    if (token.startsWith('**')) out.push({ text: token.slice(2, -2), bold: true });
+    else if (token.startsWith('`')) out.push({ text: token.slice(1, -1), code: true });
+    else out.push({ text: token.slice(1, -1), italic: true });
+    cursor = start + token.length;
+  }
+  if (cursor < text.length) out.push({ text: text.slice(cursor) });
+  return out.length ? out : [{ text }];
+}
+
+const HEADING_RE = /^(#{1,4})\s+(.*)$/;
+const QUOTE_RE = /^\s*>\s?(.*)$/;
+const ITEM_RE = /^([ \u3000]*)(\d{1,2}[.、)]|[-*+•])\s+(.*)$/;
+
+function parseMarkdown(source) {
+  const lines = source.replace(/\r\n?/g, '\n').replace(/\t/g, '  ').split('\n');
+  const blocks = [];
+  const stack = [];
+  let paragraph = [];
+
+  const container = () => {
+    const frame = stack[stack.length - 1];
+    if (!frame) return blocks;
+    const item = frame.list.items[frame.list.items.length - 1];
+    return item ? item.children : blocks;
+  };
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const text = paragraph.join(' ').replace(/\s+/g, ' ').trim();
+    paragraph = [];
+    if (text) container().push({ type: 'paragraph', inline: parseInline(text) });
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\s+$/, '');
+    if (!line.trim()) { flushParagraph(); continue; }
+
+    const heading = HEADING_RE.exec(line);
+    if (heading) {
+      flushParagraph();
+      stack.length = 0;
+      blocks.push({ type: 'heading', level: heading[1].length, inline: parseInline(heading[2].trim()) });
+      continue;
+    }
+
+    const quote = QUOTE_RE.exec(line);
+    if (quote) {
+      flushParagraph();
+      container().push({ type: 'quote', inline: parseInline(quote[1].trim()) });
+      continue;
+    }
+
+    const item = ITEM_RE.exec(line);
+    if (item) {
+      flushParagraph();
+      const indent = item[1].replace(/\u3000/g, '  ').length;
+      const ordered = /^\d/.test(item[2]);
+      const inline = parseInline(item[3].trim());
+
+      // 1) 收缩到不深于当前缩进的层级
+      while (stack.length && stack[stack.length - 1].indent > indent) stack.pop();
+
+      // 2) 同缩进但标记类型变了：模型常不给子项缩进，此时回退到同缩进同类型的祖先层
+      if (stack.length) {
+        const top = stack[stack.length - 1];
+        if (top.indent === indent && top.ordered !== ordered) {
+          const back = [...stack].reverse().find(f => f.indent === indent && f.ordered === ordered);
+          if (back) while (stack.length && stack[stack.length - 1] !== back) stack.pop();
+        }
+      }
+
+      // 3) 与栈顶同级同类 → 追加兄弟项
+      const top = stack[stack.length - 1];
+      if (top && top.indent === indent && top.ordered === ordered) {
+        top.list.items.push({ inline, children: [] });
+        continue;
+      }
+
+      // 4) 否则新开一层列表
+      const list = { type: 'list', ordered, items: [{ inline, children: [] }] };
+      container().push(list);
+      stack.push({ indent, ordered, list });
+      continue;
+    }
+
+    // 顶格的普通文本行意味着此前的列表已经结束（如回答末尾的总结句）。
+    // 若该行有缩进，则视为上一列表项的续行段落，保留在列表内。
+    if (!paragraph.length) {
+      const lead = line.length - line.trimStart().length;
+      if (lead === 0) stack.length = 0;
+    }
+    paragraph.push(line.trim());
+  }
+
+  flushParagraph();
+  return blocks;
+}
+
+/* ============================================================
+   渲染
+   ============================================================ */
+
+function inlineHtml(segs) {
+  return segs.map(seg => {
+    const cls = [seg.bold && 'md-bold', seg.italic && 'md-italic', seg.code && 'md-code']
+      .filter(Boolean).join(' ');
+    const text = escapeHtml(seg.text);
+    return cls ? `<span class="${cls}">${text}</span>` : text;
+  }).join('');
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+function renderNodes(nodes) {
+  return nodes.map(node => {
+    if (node.type === 'heading') {
+      return `<h3 class="md-heading">${inlineHtml(node.inline)}</h3>`;
+    }
+    if (node.type === 'quote') {
+      return `<blockquote class="md-quote">${inlineHtml(node.inline)}</blockquote>`;
+    }
+    if (node.type === 'list') {
+      const tag = node.ordered ? 'ol' : 'ul';
+      const items = node.items.map(item => {
+        const nested = item.children.length ? renderNodes(item.children) : '';
+        return `<li>${inlineHtml(item.inline)}${nested}</li>`;
+      }).join('');
+      return `<${tag} class="md-list">${items}</${tag}>`;
+    }
+    return `<p class="md-paragraph">${inlineHtml(node.inline)}</p>`;
+  }).join('');
+}
+
+/* ============================================================
+   示例正文（依据截图重建）
+   ============================================================ */
+
+const RAW_ANSWER = `根据参考内容，需要采集调查的关联工程设施包括以下几类，具体如下：
+
+1. **末端掉头点**
+2. **农田防护与生态环境保护工程**，细分为：
+   - **农田防风林工程**：在田块周围营造的以防风沙或台风灾害、改善农作物生长条件为主要目的的人工林
+   - **梯田埂坎防护林**：在梯田埂坎处营造的以防止水土流失、保护梯田埂坎安全为主要目的的人工林
+   - **护路护沟护坡护岸林**：在田间道路、排水沟、渠道两侧营造的以防止水土流失、保护岸坡安全、提供休憩庇荫场所为主要目的的人工林
+   - **岸坡防护工程**：包括：
+     - **护堤地**：为保护现有堤防免受水流、风浪侵蚀和冲刷所修建的工程设施及新建的小型堤防工程
+     - **生态护岸**：为保护农田免受水流侵蚀和冲刷，在沟道滩岸修建的植物或植物与工程相结合的设施
+   - **坡面防护工程**：包括：
+     - **护坡**：为防止耕地边坡冲刷，在农田边缘铺砌、栽种防护植物等措施
+     - **截水沟**：在坡地上沿等高线开挖用于拦截坡面雨水径流，并将雨水径流导引到蓄水池或排除的沟槽工程
+   - **小型蓄水工程**：在坡面上修建的拦蓄坡面径流、集蓄雨水资源的小型蓄水工程
+   - **排洪沟**：在坡面上修建的用以拦蓄、疏导坡地径流，并将雨水导入下游河道的沟槽工程
+3. **沟道治理工程**，包括：
+   - **谷坊**：横筑于易受侵蚀的小沟道或小溪中的小型固沟、拦泥、滞洪建筑物
+   - **沟头防护**：为防止径流冲刷引起沟头延伸和坡面侵蚀而采取的工程措施
+4. **农田输配电工程**，包括：
+   - **输配电线路**：通过导线将电能由某处输送到目的地的工程
+   - **变配电装置**，包括：
+     - **变压器**：电能输送过程中改变电流电压的设施
+     - **配电箱（屏）**：按电气接线要求将开关设备、测量仪表、保护电器和辅助设备组装在封闭或半封闭的金属柜中或屏幅上所形成的低压配电装置
+   - **其他变配电装置**：包括断路器、互感器、起动器、避雷器、接地装置等
+   - **弱电工程**：信号线布设、弱电设施设备和系统安装工程
+5. **其他工程**，包括：
+   - **田间监测工程**：监测农田生产条件、土壤墒情、土壤主要理化性状、农业投入品、作物产量、农田设施维护等情况的站点
+
+以上全部设施均属于需采集调查的关联工程设施。`;
+
+const SOURCES = [
+  { docName: 'GB/T30600-2022 高标准农田建设通则.pdf', pageNum: 18,
+    sectionTitle: '第五章 田间基础设施',
+    excerpt: '农田防护与生态环境保护工程应包括农田防风林、梯田埂坎防护林、护路护沟护坡护岸林、岸坡防护、坡面防护及小型蓄水、排洪沟等工程设施。' },
+];
+
+// 左侧：完全按现状渲染（把原始文本塞进 <p>，靠 HTML 空白折叠）
+document.getElementById('beforeBody').textContent = RAW_ANSWER;
+
+// 右侧：按本方案渲染
+document.getElementById('afterBody').innerHTML = renderNodes(parseMarkdown(RAW_ANSWER));
+
+document.getElementById('afterSources').innerHTML = `
+  <div class="source-cards">
+    <div class="source-cards-title">参考来源</div>
+    ${SOURCES.map(s => `
+      <div class="source-card">
+        <div class="source-card-head">
+          <span>${escapeHtml(s.docName)}</span>
+          ${s.pageNum ? `<span class="source-card-page">第 ${s.pageNum} 页</span>` : ''}
+        </div>
+        ${s.sectionTitle ? `<div class="source-card-section">${escapeHtml(s.sectionTitle)}</div>` : ''}
+        <p class="source-card-excerpt">${escapeHtml(s.excerpt)}</p>
+      </div>`).join('')}
+  </div>`;
+</script>
+</body>
+</html>

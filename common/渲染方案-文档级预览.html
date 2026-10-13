@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>农田 AI 助手 · 回答成品展示：文档级排版对比</title>
+<style>
+  *{box-sizing:border-box}
+  body{
+    margin:0;padding:26px 20px 60px;background:#070f16;color:#c9d6db;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,-apple-system,sans-serif;
+  }
+  .head{max-width:1900px;margin:0 auto 20px}
+  .head h1{margin:0 0 9px;font-size:19px;color:#eef7f4;font-weight:700}
+  .head p{margin:0;color:#7d929c;font-size:12.5px;line-height:1.85;max-width:1250px}
+  .head code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;background:#16232d;border:1px solid #26343e;border-radius:4px;padding:1px 5px;color:#9fe4c6}
+
+  .cols{max-width:1900px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:start}
+  @media (max-width:1250px){.cols{grid-template-columns:1fr}}
+
+  .col{border:1px solid #223441;border-radius:13px;overflow:hidden;background:#0b141c;display:flex;flex-direction:column}
+  .col-head{padding:12px 15px;border-bottom:1px solid #1b2a34;background:#0c161f}
+  .col-head .t{display:flex;align-items:center;gap:9px}
+  .badge{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
+  .b-now{background:#4a2a2a;color:#f0a3a3;border:1px solid #6d3838}
+  .b-dark{background:#173b31;color:#7fe3bd;border:1px solid #245844}
+  .b-paper{background:#3a3520;color:#e8d99a;border:1px solid #5f5730}
+  .col-head .s{display:block;margin-top:6px;color:#6d818c;font-size:10.5px;line-height:1.6}
+
+  .stage{flex:1}
+  .avatar-row{display:flex;gap:10px;padding:15px 15px 0}
+  .avatar{width:29px;height:29px;flex:none;border-radius:9px;display:grid;place-items:center;font-size:12px;background:#1e5946;color:#67e0b4}
+  .author{color:#8ea49f;font-size:10px;display:block;margin-bottom:5px}
+  .bubble{flex:1;min-width:0}
+
+  /* ── 现状：严格沿用 front/src/style.css:99 ── */
+  .now .bubble p{margin:6px 0 0;color:#d0dce0;font-size:12px;line-height:1.8}
+
+  /* ═══ 文档级 · 暗色（沿用应用主题）═══ */
+  .doc-dark .bubble{color:#d3dfe3}
+  .doc-dark .md-body{font-size:12.5px;line-height:1.9}
+  .doc-dark .md-heading{margin:20px 0 10px;font-size:15px;font-weight:700;color:#f0f8f5;line-height:1.55;letter-spacing:-.01em}
+  .doc-dark .md-body>:first-child{margin-top:0}
+  .doc-dark .md-paragraph{margin:10px 0 0}
+  .doc-dark .md-list{margin:10px 0 0;padding-left:2em}
+  .doc-dark .md-list>li{margin:10px 0;padding-left:2px}
+  .doc-dark .md-list li::marker{color:#5ecfa6;font-weight:700}
+  .doc-dark .md-list .md-list{margin:6px 0 0;padding-left:1.6em}
+  .doc-dark .md-list .md-list>li{margin:5px 0}
+  .doc-dark .md-body ul.md-list{list-style:disc}
+  .doc-dark .md-body ul.md-list ul.md-list{list-style:circle}
+  .doc-dark .md-body ul.md-list ul.md-list ul.md-list{list-style:square}
+  .doc-dark .md-bold{color:#f2fbf7;font-weight:700}
+  .doc-dark .md-quote{margin:10px 0 0;padding:3px 0 3px 11px;border-left:2px solid #2a6552;color:#a9bdc4}
+
+  /* ═══ 文档级 · 纸质（最贴近你给的 PDF）═══ */
+  .doc-paper{background:#fff}
+  .doc-paper .avatar-row{padding:18px 20px 0}
+  .doc-paper .author{color:#8a8a8a}
+  .doc-paper .avatar{background:#e6f2ec;color:#2f8f6c}
+  .doc-paper .bubble{color:#2b2b2b}
+  .doc-paper .md-body{font-size:13.5px;line-height:1.95}
+  .doc-paper .md-heading{margin:22px 0 11px;font-size:19px;font-weight:700;color:#111;line-height:1.5}
+  .doc-paper .md-body>:first-child{margin-top:0}
+  .doc-paper .md-paragraph{margin:11px 0 0}
+  .doc-paper .md-list{margin:11px 0 0;padding-left:2.1em}
+  .doc-paper .md-list>li{margin:10px 0;padding-left:2px}
+  .doc-paper .md-list li::marker{color:#111;font-weight:600}
+  .doc-paper .md-list .md-list{margin:7px 0 0;padding-left:1.7em}
+  .doc-paper .md-list .md-list>li{margin:6px 0}
+  .doc-paper .md-list .md-list li::marker{color:#555;font-weight:400}
+  .doc-paper .md-body ul.md-list{list-style:disc}
+  .doc-paper .md-body ul.md-list ul.md-list{list-style:circle}
+  .doc-paper .md-body ul.md-list ul.md-list ul.md-list{list-style:square}
+  .doc-paper .md-bold{color:#000;font-weight:700}
+  .doc-paper .md-quote{margin:11px 0 0;padding:3px 0 3px 12px;border-left:3px solid #ccc;color:#555}
+
+  /* ── 引用来源卡片：两套主题各一份 ── */
+  .doc-dark .source-cards{margin-top:16px;padding-top:12px;border-top:1px dashed #24343f}
+  .doc-dark .source-cards-title{color:#7fbfa4;font-size:10px;letter-spacing:.08em;margin-bottom:8px}
+  .doc-dark .source-card{border:1px solid #23443a;border-radius:8px;background:#12211f;padding:9px 11px;margin-bottom:7px}
+  .doc-dark .source-card-head{display:flex;align-items:center;gap:6px;font-size:11px;color:#bfe6d6;font-weight:600}
+  .doc-dark .source-card-page{color:#6fae95;font-weight:500;font-size:10px}
+  .doc-dark .source-card-section{color:#79a695;font-size:10px;margin-top:3px}
+  .doc-dark .source-card-excerpt{margin:5px 0 0;color:#8ea49f;font-size:10.5px;line-height:1.7;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+
+  .doc-paper .source-cards{margin-top:18px;padding-top:13px;border-top:1px solid #e2e2e2}
+  .doc-paper .source-cards-title{color:#666;font-size:10.5px;letter-spacing:.08em;margin-bottom:8px}
+  .doc-paper .source-card{border:1px solid #e4e4e4;border-radius:7px;background:#fafafa;padding:9px 11px;margin-bottom:7px}
+  .doc-paper .source-card-head{display:flex;align-items:center;gap:6px;font-size:11.5px;color:#222;font-weight:600}
+  .doc-paper .source-card-page{color:#777;font-weight:400;font-size:10.5px}
+  .doc-paper .source-card-section{color:#777;font-size:10.5px;margin-top:3px}
+  .doc-paper .source-card-excerpt{margin:5px 0 0;color:#666;font-size:11px;line-height:1.7;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+
+  .foot{max-width:1900px;margin:22px auto 0;color:#6d818c;font-size:11.5px;line-height:1.95}
+  .foot b{color:#9fe4c6;font-weight:600}
+  .foot ol{margin:8px 0 0;padding-left:1.5em}
+  .foot li{margin:4px 0}
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>回答成品展示 · 文档级排版对比</h1>
+  <p>
+    三栏使用<b>完全相同的回答文本</b>。左栏＝现状（<code>App.vue:533</code> + <code>style.css:99</code>），
+    中栏＝文档级排版（暗色，沿用应用主题），右栏＝纸质文档风格（最贴近你给的那份 PDF 观感）。
+    示例在正文首行加了一个 <code>##</code> 标题用于演示标题层级——真实输出是否带标题，取决于是否在提示词里要求（见文末说明）。
+  </p>
+</div>
+
+<div class="cols">
+  <section class="col now">
+    <div class="col-head">
+      <div class="t"><span class="badge b-now">现状</span></div>
+      <span class="s">纯文本插值 · 无 pre-wrap · 无 Markdown 解析</span>
+    </div>
+    <div class="stage">
+      <div class="avatar-row">
+        <span class="avatar">✦</span>
+        <div class="bubble">
+          <span class="author">农田 AI 助手</span>
+          <p id="bodyNow"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="col doc-dark">
+    <div class="col-head">
+      <div class="t"><span class="badge b-dark">文档级 · 暗色</span></div>
+      <span class="s">层级分明 · 沿用应用暗色主题 · 不使用 v-html</span>
+    </div>
+    <div class="stage">
+      <div class="avatar-row">
+        <span class="avatar">✦</span>
+        <div class="bubble">
+          <span class="author">农田 AI 助手</span>
+          <div id="bodyDark"></div>
+          <div id="srcDark"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="col doc-paper">
+    <div class="col-head">
+      <div class="t"><span class="badge b-paper">文档级 · 纸质</span></div>
+      <span class="s">接近 PDF 观感 · 适合打印 / 导出 / 投屏汇报</span>
+    </div>
+    <div class="stage">
+      <div class="avatar-row">
+        <span class="avatar">✦</span>
+        <div class="bubble">
+          <span class="author">农田 AI 助手</span>
+          <div id="bodyPaper"></div>
+          <div id="srcPaper"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="foot">
+  <b>关于「层级分明」的两个前提</b>
+  <ol>
+    <li><b>渲染层</b>必须把编号、子项、加粗还原成真正的列表结构（本页中/右两栏已实现）。</li>
+    <li><b>内容层</b>要有可分的层级。当前提示词只要求「步骤、列表、编号条目必须完整列出」，<b>没有要求小节标题</b>，
+        所以模型不会主动输出标题。若要达到右栏那种文档感，需要在提示词里加一句要求（改动约 3 行，见最终方案 §12）。</li>
+  </ol>
+</div>
+
+<script>
+/* ===== front/src/utils/markdown.ts 的 JS 等价实现（含「顶格段落结束列表」修复） ===== */
+const INLINE_RE = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*)/g;
+
+function parseInline(text) {
+  const out = [];
+  let cursor = 0;
+  for (const match of text.matchAll(INLINE_RE)) {
+    const start = match.index ?? 0;
+    if (start > cursor) out.push({ text: text.slice(cursor, start) });
+    const token = match[0];
+    if (token.startsWith('**')) out.push({ text: token.slice(2, -2), bold: true });
+    else if (token.startsWith('`')) out.push({ text: token.slice(1, -1), code: true });
+    else out.push({ text: token.slice(1, -1), italic: true });
+    cursor = start + token.length;
+  }
+  if (cursor < text.length) out.push({ text: text.slice(cursor) });
+  return out.length ? out : [{ text }];
+}
+
+const HEADING_RE = /^(#{1,4})\s+(.*)$/;
+const QUOTE_RE = /^\s*>\s?(.*)$/;
+const ITEM_RE = /^([ \u3000]*)(\d{1,2}[.、)]|[-*+•])\s+(.*)$/;
+
+function parseMarkdown(source) {
+  const lines = source.replace(/\r\n?/g, '\n').replace(/\t/g, '  ').split('\n');
+  const blocks = [];
+  const stack = [];
+  let paragraph = [];
+
+  const container = () => {
+    const frame = stack[stack.length - 1];
+    if (!frame) return blocks;
+    const item = frame.list.items[frame.list.items.length - 1];
+    return item ? item.children : blocks;
+  };
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const text = paragraph.join(' ').replace(/\s+/g, ' ').trim();
+    paragraph = [];
+    if (text) container().push({ type: 'paragraph', inline: parseInline(text) });
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\s+$/, '');
+    if (!line.trim()) { flushParagraph(); continue; }
+
+    const heading = HEADING_RE.exec(line);
+    if (heading) {
+      flushParagraph();
+      stack.length = 0;
+      blocks.push({ type: 'heading', level: heading[1].length, inline: parseInline(heading[2].trim()) });
+      continue;
+    }
+
+    const quote = QUOTE_RE.exec(line);
+    if (quote) {
+      flushParagraph();
+      container().push({ type: 'quote', inline: parseInline(quote[1].trim()) });
+      continue;
+    }
+
+    const item = ITEM_RE.exec(line);
+    if (item) {
+      flushParagraph();
+      const indent = item[1].replace(/\u3000/g, '  ').length;
+      const ordered = /^\d/.test(item[2]);
+      const inline = parseInline(item[3].trim());
+
+      while (stack.length && stack[stack.length - 1].indent > indent) stack.pop();
+
+      if (stack.length) {
+        const top = stack[stack.length - 1];
+        if (top.indent === indent && top.ordered !== ordered) {
+          const back = [...stack].reverse().find(f => f.indent === indent && f.ordered === ordered);
+          if (back) while (stack.length && stack[stack.length - 1] !== back) stack.pop();
+        }
+      }
+
+      const top = stack[stack.length - 1];
+      if (top && top.indent === indent && top.ordered === ordered) {
+        top.list.items.push({ inline, children: [] });
+        continue;
+      }
+
+      const list = { type: 'list', ordered, items: [{ inline, children: [] }] };
+      container().push(list);
+      stack.push({ indent, ordered, list });
+      continue;
+    }
+
+    // 顶格普通文本行 → 此前的列表已结束；有缩进则视为上一列表项的续行
+    if (!paragraph.length) {
+      const lead = line.length - line.trimStart().length;
+      if (lead === 0) stack.length = 0;
+    }
+    paragraph.push(line.trim());
+  }
+
+  flushParagraph();
+  return blocks;
+}
+
+/* ===== 渲染 ===== */
+function escapeHtml(v) {
+  return String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function inlineHtml(segs) {
+  return segs.map(seg => {
+    const cls = [seg.bold && 'md-bold', seg.italic && 'md-italic', seg.code && 'md-code'].filter(Boolean).join(' ');
+    const text = escapeHtml(seg.text);
+    return cls ? `<span class="${cls}">${text}</span>` : text;
+  }).join('');
+}
+
+function renderNodes(nodes) {
+  return nodes.map(node => {
+    if (node.type === 'heading') return `<h3 class="md-heading">${inlineHtml(node.inline)}</h3>`;
+    if (node.type === 'quote') return `<blockquote class="md-quote">${inlineHtml(node.inline)}</blockquote>`;
+    if (node.type === 'list') {
+      const tag = node.ordered ? 'ol' : 'ul';
+      const items = node.items.map(item =>
+        `<li>${inlineHtml(item.inline)}${item.children.length ? renderNodes(item.children) : ''}</li>`).join('');
+      return `<${tag} class="md-list">${items}</${tag}>`;
+    }
+    return `<p class="md-paragraph">${inlineHtml(node.inline)}</p>`;
+  }).join('');
+}
+
+function sourceCardsHtml(sources) {
+  const seen = new Set();
+  const cards = sources.filter(s => {
+    const key = `${s.docName}-${s.pageNum ?? 'x'}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (!cards.length) return '';
+  return `<div class="source-cards"><div class="source-cards-title">参考来源</div>${
+    cards.map(s => `<div class="source-card">
+      <div class="source-card-head"><span>${escapeHtml(s.docName)}</span>${
+        s.pageNum ? `<span class="source-card-page">第 ${s.pageNum} 页</span>` : ''}</div>
+      ${s.sectionTitle ? `<div class="source-card-section">${escapeHtml(s.sectionTitle)}</div>` : ''}
+      ${s.excerpt ? `<p class="source-card-excerpt">${escapeHtml(s.excerpt)}</p>` : ''}
+    </div>`).join('')}</div>`;
+}
+
+/* ===== 示例正文：依据截图重建，首行加了标题用于演示层级 ===== */
+const RAW_ANSWER = `## 需要采集调查的关联工程设施
+
+根据参考内容，需要采集调查的关联工程设施包括以下几类，具体如下：
+
+1. **末端掉头点**
+2. **农田防护与生态环境保护工程**，细分为：
+   - **农田防风林工程**：在田块周围营造的以防风沙或台风灾害、改善农作物生长条件为主要目的的人工林
+   - **梯田埂坎防护林**：在梯田埂坎处营造的以防止水土流失、保护梯田埂坎安全为主要目的的人工林
+   - **护路护沟护坡护岸林**：在田间道路、排水沟、渠道两侧营造的以防止水土流失、保护岸坡安全、提供休憩庇荫场所为主要目的的人工林
+   - **岸坡防护工程**：包括：
+     - **护堤地**：为保护现有堤防免受水流、风浪侵蚀和冲刷所修建的工程设施及新建的小型堤防工程
+     - **生态护岸**：为保护农田免受水流侵蚀和冲刷，在沟道滩岸修建的植物或植物与工程相结合的设施
+   - **坡面防护工程**：包括：
+     - **护坡**：为防止耕地边坡冲刷，在农田边缘铺砌、栽种防护植物等措施
+     - **截水沟**：在坡地上沿等高线开挖用于拦截坡面雨水径流，并将雨水径流导引到蓄水池或排除的沟槽工程
+   - **小型蓄水工程**：在坡面上修建的拦蓄坡面径流、集蓄雨水资源的小型蓄水工程
+   - **排洪沟**：在坡面上修建的用以拦蓄、疏导坡地径流，并将雨水导入下游河道的沟槽工程
+3. **沟道治理工程**，包括：
+   - **谷坊**：横筑于易受侵蚀的小沟道或小溪中的小型固沟、拦泥、滞洪建筑物
+   - **沟头防护**：为防止径流冲刷引起沟头延伸和坡面侵蚀而采取的工程措施
+4. **农田输配电工程**，包括：
+   - **输配电线路**：通过导线将电能由某处输送到目的地的工程
+   - **变配电装置**，包括：
+     - **变压器**：电能输送过程中改变电流电压的设施
+     - **配电箱（屏）**：按电气接线要求将开关设备、测量仪表、保护电器和辅助设备组装在封闭或半封闭的金属柜中或屏幅上所形成的低压配电装置
+   - **其他变配电装置**：包括断路器、互感器、起动器、避雷器、接地装置等
+   - **弱电工程**：信号线布设、弱电设施设备和系统安装工程
+5. **其他工程**，包括：
+   - **田间监测工程**：监测农田生产条件、土壤墒情、土壤主要理化性状、农业投入品、作物产量、农田设施维护等情况的站点
+
+以上全部设施均属于需采集调查的关联工程设施。`;
+
+const SOURCES = [
+  { docName: 'GB/T30600-2022 高标准农田建设通则.pdf', pageNum: 18,
+    sectionTitle: '第五章 田间基础设施',
+    excerpt: '农田防护与生态环境保护工程应包括农田防风林、梯田埂坎防护林、护路护沟护坡护岸林、岸坡防护、坡面防护及小型蓄水、排洪沟等工程设施。' },
+];
+
+const nodes = parseMarkdown(RAW_ANSWER);
+const html = renderNodes(nodes);
+
+document.getElementById('bodyNow').textContent = RAW_ANSWER;
+document.getElementById('bodyDark').innerHTML = html;
+document.getElementById('bodyPaper').innerHTML = html;
+document.getElementById('srcDark').innerHTML = sourceCardsHtml(SOURCES);
+document.getElementById('srcPaper').innerHTML = sourceCardsHtml(SOURCES);
+</script>
+</body>
+</html>
