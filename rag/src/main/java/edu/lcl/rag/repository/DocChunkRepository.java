@@ -89,6 +89,59 @@ public interface DocChunkRepository extends JpaRepository<DocChunk, Long> {
             @Param("docId") Long docId, @Param("tsQuery") String tsQuery, @Param("topK") int topK);
 
     /**
+     * bigram 全文检索（中文可用版）。
+     * 使用 hbnt_tsv() 切好的 content_tsv_bigram 列：汉字按 2-gram 展开，ASCII/数字词元原样。
+     * 实测「高标准农田」命中 59（旧 content_tsv 只有 2），「农田地力提升工程」0 → 11。
+     */
+    @Query(value = """
+            SELECT *
+            FROM kb_doc_chunk
+            WHERE kb_id = :kbId
+              AND content_tsv_bigram @@ to_tsquery('simple', :tsQuery)
+            ORDER BY ts_rank(content_tsv_bigram, to_tsquery('simple', :tsQuery)) DESC
+            LIMIT :topK
+            """, nativeQuery = true)
+    List<DocChunk> findByBigramSearch(@Param("kbId") Long kbId,
+            @Param("tsQuery") String tsQuery, @Param("topK") int topK);
+
+    @Query(value = """
+            SELECT *
+            FROM kb_doc_chunk
+            WHERE kb_id = :kbId AND doc_id = :docId
+              AND content_tsv_bigram @@ to_tsquery('simple', :tsQuery)
+            ORDER BY ts_rank(content_tsv_bigram, to_tsquery('simple', :tsQuery)) DESC
+            LIMIT :topK
+            """, nativeQuery = true)
+    List<DocChunk> findByDocumentBigramSearch(@Param("kbId") Long kbId, @Param("docId") Long docId,
+            @Param("tsQuery") String tsQuery, @Param("topK") int topK);
+
+    /**
+     * 标准代号精确检索：正文两侧都归一化（小写、去空格、去 /T）后做 LIKE。
+     * 纯代号问题（「GB 1023 是什么标准」）靠这一路才能召回，向量与词法都指望不上。
+     */
+    @Query(value = """
+            SELECT *
+            FROM kb_doc_chunk
+            WHERE kb_id = :kbId
+              AND replace(replace(lower(content), ' ', ''), '/t', '') LIKE :pattern
+            ORDER BY page_num, id
+            LIMIT :topK
+            """, nativeQuery = true)
+    List<DocChunk> findByStandardCode(@Param("kbId") Long kbId,
+            @Param("pattern") String pattern, @Param("topK") int topK);
+
+    @Query(value = """
+            SELECT *
+            FROM kb_doc_chunk
+            WHERE kb_id = :kbId AND doc_id = :docId
+              AND replace(replace(lower(content), ' ', ''), '/t', '') LIKE :pattern
+            ORDER BY page_num, id
+            LIMIT :topK
+            """, nativeQuery = true)
+    List<DocChunk> findByDocumentStandardCode(@Param("kbId") Long kbId, @Param("docId") Long docId,
+            @Param("pattern") String pattern, @Param("topK") int topK);
+
+    /**
      * 按文档 ID 查询所有分块
      */
     List<DocChunk> findByDocId(Long docId);

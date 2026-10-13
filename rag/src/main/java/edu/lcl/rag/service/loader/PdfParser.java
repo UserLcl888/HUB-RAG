@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Component
@@ -100,6 +101,17 @@ public class PdfParser implements DocumentParser {
             "(?i)^(?:\\[?(?:image|figure|图|图示|图片|插图|扫描件|签章|印章)\\]?|[-_=·•※]+)$");
     private static final Pattern CHINESE_TEXT = Pattern.compile("[\\p{IsHan}]");
     private static final Pattern SECTION_NUMBER = Pattern.compile("\\d{1,2}(?:\\.\\d{1,3}){1,4}\\.?");
+    /**
+     * 标准代号：GB 1023 / GB/T 30600 / SL 482 / TD/T 1048 …
+     * <p>
+     * 必须原样保留：这些代号是"要求类"问答的核心信息，剥掉后回答里只剩 "1023"、"30600"，
+     * 用户无法使用，检索也无法精确命中（实测库里曾出现 {@code 应符合 30600规定}）。
+     */
+    private static final Pattern STANDARD_CODE = Pattern.compile(
+            "(?i)(GB|NY|SL|TD|DB|JGJ|CJJ|JTG|JTS|HJ|DL|NB|SN)\\s*/?\\s*T?\\s*\\d{2,5}(?:\\.\\d+)*");
+    /** 紧跟在数字后的工程量单位：10KV、8%、500MPa…保留，否则会变成"额定电压10 及以下" */
+    private static final Pattern UNIT_AFTER_NUMBER = Pattern.compile(
+            "(?<=\\d)\\s*(?:kV|KV|kW|KW|MW|mW|GPa|MPa|kPa|Pa|MHz|Hz|km2|km²|hm2|hm²|m3|m³|m2|m²|kg|km|cm|mm|ha|mA|V|A|W|t|%|‰)");
 
     /**
      * 判断是否为目录页：若页内"目录条目行"占比较高，则认为是目录页。
@@ -152,17 +164,88 @@ public class PdfParser implements DocumentParser {
             }
             // 先剔除"伪汉字"（缺 ToUnicode 的字体把 ASCII 抽成了 U+7280~U+72CF）
             line = BROKEN_CMAP_CHAR.matcher(line).replaceAll(" ");
-            // 英文仅作为图标、编号或排版噪声出现时不参与中文问答；中文行中的英文片段也移除。
-            line = LATIN_TEXT.matcher(line).replaceAll(" ");
+            // 有些 PDF 把数字 1 抽成字母 l/I（实测"额定电压l0KV"），按上下文纠正
+            line = fixMisencodedDigits(line);
+            // 保留标准代号与单位，再删掉其余英文：封面英文标题、页眉噪声都会被清掉，
+            // 而 "GB/T 30600"、"10KV" 会完整留下（见 protectAndCleanLatin）
+            line = protectAndCleanLatin(line);
+            // 代号规范化（GB/T30600 → GB/T 30600）并在两侧补空格，便于检索时精确命中
+            line = padStandardCodes(line);
+            // 排版产生的"汉字间孤立空格"会让检索 2-gram 退化成单字（实测 "高 标 准 农 田"），合并掉
+            line = line.replaceAll("(?<=[\\u4e00-\\u9fff])[ \\u00a0\\u3000]+(?=[\\u4e00-\\u9fff])", "");
             line = line.replaceAll("[\\s\\u00a0]+", " ").strip();
-            // 单独排版的章节编号须保留，供父块将它与下一行中文标题合并。
-            if (CHINESE_TEXT.matcher(line).find() || SECTION_NUMBER.matcher(line).matches()) {
+            // 保留：含汉字 / 单独排版的章节号 / 纯标准代号行（规范引用清单的排版）
+            if (CHINESE_TEXT.matcher(line).find()
+                    || SECTION_NUMBER.matcher(line).matches()
+                    || isStandardCodeLine(line)) {
                 retainedLines.add(line);
             }
         }
         return String.join("\n", retainedLines)
                 .replaceAll("\\n{3,}", "\n\n")
                 .strip();
+    }
+
+    /**
+     * 保留标准代号与数值单位，删除其余英文片段。
+     * 做法：先把要保留的片段换成占位符，删完英文再还原——避免"一刀切删所有拉丁字母"把代号吃掉。
+     *
+     * @param line 原始行
+     * @return 只保留代号/单位与中文的行
+     */
+    private String protectAndCleanLatin(String line) {
+        List<String> kept = new ArrayList<>();
+        String protectedLine = protect(line, STANDARD_CODE, kept);
+        protectedLine = protect(protectedLine, UNIT_AFTER_NUMBER, kept);
+        protectedLine = LATIN_TEXT.matcher(protectedLine).replaceAll(" ");
+        for (int i = 0; i < kept.size(); i++) {
+            protectedLine = protectedLine.replace("\u0001" + i + "\u0001", kept.get(i));
+        }
+        return protectedLine;
+    }
+
+    /** 把匹配到的片段替换成 {@code \u0001序号\u0001} 占位符，并记录原文 */
+    private String protect(String line, Pattern pattern, List<String> kept) {
+        Matcher matcher = pattern.matcher(line);
+        StringBuilder builder = new StringBuilder();
+        while (matcher.find()) {
+            kept.add(matcher.group());
+            matcher.appendReplacement(builder, "\u0001" + (kept.size() - 1) + "\u0001");
+        }
+        matcher.appendTail(builder);
+        return builder.toString();
+    }
+
+    /** 代号规范化：{@code GB/T30600} / {@code gb / t 30600} → {@code GB/T 30600}，并在两侧补空格 */
+    private String padStandardCodes(String line) {
+        Matcher matcher = STANDARD_CODE.matcher(line);
+        StringBuilder builder = new StringBuilder();
+        while (matcher.find()) {
+            String code = matcher.group().toUpperCase(java.util.Locale.ROOT).replaceAll("\\s+", "");
+            code = code.replaceFirst("^(\\D+?)(\\d)", "$1 $2");     // GB1023 → GB 1023；GB/T30600 → GB/T 30600
+            matcher.appendReplacement(builder, Matcher.quoteReplacement(" " + code + " "));
+        }
+        matcher.appendTail(builder);
+        return builder.toString().replaceAll("[\\s\\u00a0]+", " ").strip();
+    }
+
+    /** 整行是否就是标准代号（规范引用清单里常见"GB 5084"单独成行） */
+    private boolean isStandardCodeLine(String line) {
+        String stripped = line.strip();
+        if (stripped.isEmpty()) {
+            return false;
+        }
+        String rest = STANDARD_CODE.matcher(stripped).replaceAll(" ").replaceAll("[\\s,，、;；.。]+", "");
+        return rest.isEmpty();
+    }
+
+    /**
+     * 纠正"数字被抽成字母"的字体问题：{@code 额定电压l0KV} → {@code 额定电压10KV}。
+     * 只在"汉字/数字 + l/I + 数字"这种明显是数值的上下文里替换，避免误伤正常英文。
+     */
+    private String fixMisencodedDigits(String line) {
+        return line.replaceAll("(?<=[\\u4e00-\\u9fff\\d])[lI](?=\\d)", "1")
+                .replaceAll("(?<=\\d)[Oo](?=\\d)", "0");
     }
 
     /**

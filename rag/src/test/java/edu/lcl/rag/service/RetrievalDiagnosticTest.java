@@ -19,14 +19,19 @@ import static org.mockito.Mockito.verifyNoInteractions;
  */
 class RetrievalDiagnosticTest {
 
-    /** 验证截图中的中文问题目前不会拆成检索关键词。 */
+    /** 中文问题现在会切成 2-gram 词法查询（旧实现是整句当一个词，永远 0 命中）。 */
     @Test
-    void chineseQuestionIsUsedAsOneWholeSearchTerm() {
+    void chineseQuestionIsSplitIntoBigramTerms() {
         String question = "规划建设布局包括什么内容";
-        String query = new TsQueryBuilder().build(question);
+        TsQueryBuilder.TsQueries queries = new TsQueryBuilder().build(question);
 
-        assertThat(query).isEqualTo(question);
-        System.out.println("DIAGNOSTIC Chinese query remains one whole term: " + query);
+        // 严格版：汉字 2-gram 全 AND，且"包括/什么"这类含停用字的组合已被丢弃
+        assertThat(queries.strict()).contains("'规划'").contains("'建设'").contains("'布局'");
+        assertThat(queries.strict()).doesNotContain("包括").doesNotContain("什么");
+        // 宽松版：同样词元但用 OR 连接
+        assertThat(queries.loose()).contains("|");
+        System.out.println("DIAGNOSTIC bigram strict: " + queries.strict());
+        System.out.println("DIAGNOSTIC bigram loose : " + queries.loose());
     }
 
     /** 验证全部低于置信度阈值时仍保留最高分片段。 */

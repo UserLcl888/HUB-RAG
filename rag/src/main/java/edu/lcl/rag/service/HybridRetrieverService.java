@@ -18,6 +18,7 @@ public class HybridRetrieverService {
     private final EmbeddingService embeddingService;
     private final DocChunkRepository chunkRepository;
     private final TsQueryBuilder tsQueryBuilder;
+    private final StandardCodeExtractor standardCodeExtractor;
 
     @Value("${rag.retrieval.vector-top-k:20}")
     private int vectorTopK;
@@ -51,22 +52,25 @@ public class HybridRetrieverService {
                         : chunkRepository.findByDocumentVectorSimilarity(kbId, docId, embeddingStr, vectorTopK)).stream())
                 .collect(Collectors.toList());
 
-        // Step 2：全文检索
-        String tsQuery = tsQueryBuilder.build(question);
+        // Step 2：词法检索（bigram：先严格版，空则宽松版）
+        TsQueryBuilder.TsQueries queries = tsQueryBuilder.build(question);
         List<DocChunk> fulltextResults = new ArrayList<>();
-        if (tsQuery != null) {
-            fulltextResults = kbIds.stream()
-                    .flatMap(kbId -> (docId == null
-                            ? chunkRepository.findByFullTextSearch(kbId, tsQuery, fulltextTopK)
-                            : chunkRepository.findByDocumentFullTextSearch(kbId, docId, tsQuery, fulltextTopK)).stream())
-                    .collect(Collectors.toList());
+        if (!queries.isEmpty()) {
+            fulltextResults = lexicalSearch(queries.strict(), kbIds, docId);
+            if (fulltextResults.isEmpty() && !queries.loose().isBlank()) {
+                fulltextResults = lexicalSearch(queries.loose(), kbIds, docId);
+                log.debug("[HybridRetriever] 严格版 0 命中，改用宽松版：{}", queries.loose());
+            }
         }
 
-        log.debug("[HybridRetriever] 向量检索召回={}，全文检索召回={}",
-                vectorResults.size(), fulltextResults.size());
+        // Step 2b：标准代号精确检索（纯代号问题只有这一路能召回）
+        List<DocChunk> codeResults = codeSearch(question, kbIds, docId);
+
+        log.debug("[HybridRetriever] 向量={}，词法={}，代号={}",
+                vectorResults.size(), fulltextResults.size(), codeResults.size());
 
         // Step 3：RRF 融合
-        List<ScoredChunk> merged = rrfMerge(vectorResults, fulltextResults);
+        List<ScoredChunk> merged = rrfMerge(List.of(vectorResults, fulltextResults, codeResults));
 
         // Step 4：取 TopN
         List<ScoredChunk> topResults = merged.stream()
@@ -77,29 +81,55 @@ public class HybridRetrieverService {
         return topResults;
     }
 
+    /** 走 content_tsv_bigram 的词法检索 */
+    private List<DocChunk> lexicalSearch(String tsQuery, List<Long> kbIds, Long docId) {
+        if (tsQuery == null || tsQuery.isBlank()) {
+            return List.of();
+        }
+        return kbIds.stream()
+                .flatMap(kbId -> (docId == null
+                        ? chunkRepository.findByBigramSearch(kbId, tsQuery, fulltextTopK)
+                        : chunkRepository.findByDocumentBigramSearch(kbId, docId, tsQuery, fulltextTopK)).stream())
+                .collect(Collectors.toList());
+    }
+
     /**
-     * RRF 融合两路结果。
-     * 去重：同一个 chunk 出现在两路结果中时，分数累加。
+     * 标准代号精确检索：从问题里抽代号（GB 1023 / GB/T 30600 / 裸数字），归一化后 LIKE 匹配。
+     * 这一路的价值是"保召回"——纯代号查询在向量与词法上都几乎没有信号。
      */
-    private List<ScoredChunk> rrfMerge(List<DocChunk> vectorList, List<DocChunk> fulltextList) {
+    private List<DocChunk> codeSearch(String question, List<Long> kbIds, Long docId) {
+        List<String> codes = standardCodeExtractor.extract(question);
+        if (codes.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, DocChunk> matched = new LinkedHashMap<>();
+        for (String code : codes) {
+            String pattern = standardCodeExtractor.likePattern(code);
+            kbIds.forEach(kbId -> (docId == null
+                    ? chunkRepository.findByStandardCode(kbId, pattern, fulltextTopK)
+                    : chunkRepository.findByDocumentStandardCode(kbId, docId, pattern, fulltextTopK))
+                    .forEach(chunk -> matched.putIfAbsent(chunk.getId(), chunk)));
+        }
+        log.debug("[HybridRetriever] 代号检索 codes={} → {} 块", codes, matched.size());
+        return new ArrayList<>(matched.values());
+    }
+
+    /**
+     * RRF 融合多路结果（向量 / 词法 / 标准代号）。
+     * 去重：同一个 chunk 出现在多路结果中时，分数累加。
+     */
+    private List<ScoredChunk> rrfMerge(List<List<DocChunk>> rankedLists) {
         // key: chunkId → RRF 分数
         Map<Long, Double> scoreMap = new LinkedHashMap<>();
         Map<Long, DocChunk> chunkMap = new HashMap<>();
 
-        // 向量检索结果计分
-        for (int rank = 0; rank < vectorList.size(); rank++) {
-            DocChunk chunk = vectorList.get(rank);
-            double rrfScore = 1.0 / (RRF_K + rank + 1);
-            scoreMap.merge(chunk.getId(), rrfScore, Double::sum);
-            chunkMap.put(chunk.getId(), chunk);
-        }
-
-        // 全文检索结果计分（累加）
-        for (int rank = 0; rank < fulltextList.size(); rank++) {
-            DocChunk chunk = fulltextList.get(rank);
-            double rrfScore = 1.0 / (RRF_K + rank + 1);
-            scoreMap.merge(chunk.getId(), rrfScore, Double::sum);
-            chunkMap.put(chunk.getId(), chunk);
+        for (List<DocChunk> ranked : rankedLists) {
+            for (int rank = 0; rank < ranked.size(); rank++) {
+                DocChunk chunk = ranked.get(rank);
+                double rrfScore = 1.0 / (RRF_K + rank + 1);
+                scoreMap.merge(chunk.getId(), rrfScore, Double::sum);
+                chunkMap.put(chunk.getId(), chunk);
+            }
         }
 
         // 按 RRF 分数降序排列

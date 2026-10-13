@@ -120,6 +120,58 @@ CREATE TRIGGER trigger_chunk_tsv
 EXECUTE FUNCTION update_chunk_tsv();
 
 -- ================================================================
+-- 4b. 中文 bigram 全文检索（PostgreSQL simple 配置不切中文，索引侧自己做 2-gram）
+--     实测：「高标准农田」旧 content_tsv 命中 2 → bigram 命中 59；
+--           「农田地力提升工程」0 → 11。查询侧配套见 TsQueryBuilder。
+--     完整迁移脚本：db/migration/V6__fts_bigram.sql
+-- ================================================================
+CREATE OR REPLACE FUNCTION hbnt_tsv(txt text) RETURNS tsvector AS $$
+DECLARE
+    token text;
+    out_text text := '';
+    i int;
+    len int;
+BEGIN
+    FOR token IN
+        SELECT coalesce(m[1], m[2])
+        FROM regexp_matches(coalesce(txt, ''),
+             U&'([\4e00-\9fff]+)|([A-Za-z0-9][A-Za-z0-9./-]*)', 'g') AS m
+    LOOP
+        IF token ~ U&'^[\4e00-\9fff]+$' THEN
+            len := char_length(token);
+            IF len = 1 THEN
+                out_text := out_text || ' ' || token;
+            ELSE
+                FOR i IN 1..(len - 1) LOOP
+                    out_text := out_text || ' ' || substring(token from i for 2);
+                END LOOP;
+            END IF;
+        ELSE
+            out_text := out_text || ' ' || token;
+        END IF;
+    END LOOP;
+    RETURN to_tsvector('simple', out_text);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+ALTER TABLE kb_doc_chunk ADD COLUMN IF NOT EXISTS content_tsv_bigram TSVECTOR;
+CREATE INDEX IF NOT EXISTS idx_chunk_tsv_bigram ON kb_doc_chunk USING GIN (content_tsv_bigram);
+
+CREATE OR REPLACE FUNCTION update_chunk_tsv_bigram() RETURNS TRIGGER AS $$
+BEGIN
+    NEW.content_tsv_bigram := hbnt_tsv(NEW.content);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_chunk_tsv_bigram ON kb_doc_chunk;
+CREATE TRIGGER trigger_chunk_tsv_bigram
+    BEFORE INSERT OR UPDATE OF content
+    ON kb_doc_chunk
+    FOR EACH ROW
+EXECUTE FUNCTION update_chunk_tsv_bigram();
+
+-- ================================================================
 -- 5. 索引任务表（异步索引状态管理）
 -- ================================================================
 CREATE TABLE kb_index_task

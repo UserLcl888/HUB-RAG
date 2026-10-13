@@ -45,10 +45,17 @@ public class SourceBuilder {
             }
         }
 
-        // 模型未标注引用、或标注编号全部越界时，把所有 chunk 都列为来源
+        // 拒答（"在知识库中未找到…"）时不应给出任何来源：
+        // 否则会出现"回答未找到、下面却挂着一个某页来源"的自相矛盾（实测「1+1=?」给出了第 15 页来源）
+        if (isRefusal(answer)) {
+            log.debug("[SourceBuilder] 回答为未找到/无法回答，不返回来源");
+            return List.of();
+        }
+
+        // 模型未标注引用、或标注编号全部越界时：不再"把所有块都当来源"（那等于挂了一堆与回答无关的出处）
         if (validIndices.isEmpty()) {
-            log.debug("[SourceBuilder] 无有效引用标注，使用所有 chunk 作为来源");
-            for (int i = 1; i <= hits.size(); i++) validIndices.add(i);
+            log.debug("[SourceBuilder] 无有效引用标注，不返回来源");
+            return List.of();
         }
         citedIndices = validIndices;
 
@@ -82,6 +89,26 @@ public class SourceBuilder {
         }
 
         return sources;
+    }
+
+    /**
+     * 判定回答是否为"未找到 / 无法回答"这类拒答。
+     * 只在**整段回答很短**时才算拒答，避免把"6.2 未提及，但 6.3 规定…"这种正常回答误判掉。
+     *
+     * @param answer 模型回答
+     * @return true 表示这是一段拒答，不应附带来源
+     */
+    private boolean isRefusal(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return true;
+        }
+        String compact = answer.replaceAll("\\s+", "");
+        if (compact.length() > 80) {
+            return false;
+        }
+        return compact.contains("未找到") || compact.contains("没有找到") || compact.contains("未提及")
+                || compact.contains("不包含") || compact.contains("无法回答") || compact.contains("无法确定")
+                || compact.contains("没有相关") || compact.contains("未收录");
     }
 
     /**
