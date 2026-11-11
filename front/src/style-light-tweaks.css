@@ -48,6 +48,10 @@ html[data-theme="white"] .home-hot-item{background:#fff}
 html[data-theme="white"] .home-hot-item:hover{background:#f7fbf9}
 html[data-theme="white"] .home-hot-item.is-active{background:#eefaf4}
 html[data-theme="white"] .home-tag{background:#fff}
+/* 标签移入 / 按下时换成薄荷底，移开复原（覆盖生成器那条只有描边变化的 hover） */
+html[data-theme="white"] .home-tag:hover,
+html[data-theme="white"] .home-tag:active{border-color:#8ed7bd;background:#eefaf4;color:#0c5f46}
+/* 欢迎区的品牌块：保持生成器翻出来的浅绿面（已确认要原样） */
 html[data-theme="white"] .welcome-mark{background:linear-gradient(145deg,#dcf3ea,#eaf8f3)}
 
 /* 引用卡片 */
@@ -138,6 +142,7 @@ html:not([data-theme="white"]) .graph-page {
   --kg-node-dot-blue: #85cce4;
   --kg-node-dot-violet: #c0b2f0;
   --kg-node-dot-amber: #e8bb83;
+  --kg-node-ring-active: #7be5bc;
   --kg-node-pulse: #43cba0;
   --kg-node-pulse-opacity: .08;
   --kg-node-pulse-active: .18;
@@ -213,43 +218,43 @@ html[data-theme="white"] .graph-page {
   --kg-grid-dot: #7fa79c;
   --kg-grid-dot-opacity: .17;
   --kg-grid-plane-opacity: .5;
-  --kg-orbit: #17a97b;
-  --kg-edge: #38ab8c;
-  --kg-edge-active: #16a97b;
+  --kg-orbit: #12996f;
+  --kg-edge: #2f9d80;
+  --kg-edge-active: #0f8f68;
   --kg-related-edge: #8aa9b4;
   --kg-canvas-title: #1e3a33;
-  --kg-canvas-meta: #77909a;
+  --kg-canvas-meta: #586f7a;
   --kg-live-dot: #23c48f;
   --kg-live-glow: #23c48f45;
-  --kg-legend: #647b84;
+  --kg-legend: #546a73;
   --kg-legend-core: #23c48f;
   --kg-legend-field: #4a90c4;
   --kg-legend-edge: #93a9b2;
   --kg-heading: #16232b;
-  --kg-heading-icon: #12a97c;
+  --kg-heading-icon: #0b8660;
   --kg-demo-border: #b7dccd;
-  --kg-demo-text: #12a97c;
+  --kg-demo-text: #0b8660;
   --kg-detail-surface: linear-gradient(160deg, #f2faf7, #f3f8fd);
   --kg-detail-border: #dcefe8;
   --kg-detail-icon-bg: #d5f0e6;
-  --kg-detail-icon: #12a97c;
-  --kg-detail-category: #128763;
+  --kg-detail-icon: #0b8660;
+  --kg-detail-category: #0b8060;
   --kg-detail-title: #0e1b22;
   --kg-detail-text: #57676f;
   --kg-detail-rule: #e4ebe9;
   --kg-detail-meta: #5d7a75;
   --kg-detail-value: #17262c;
-  --kg-topic-title: #6b7d86;
+  --kg-topic-title: #586f7a;
   --kg-chip-bg: #fff;
   --kg-chip-border: #e4ebe9;
   --kg-chip-text: #55656d;
   --kg-chip-active-bg: #e9f8f2;
   --kg-chip-active-border: #8ed7bd;
   --kg-chip-active-text: #0c6f52;
-  --kg-link: #12a97c;
-  --kg-note: #7a8b93;
+  --kg-link: #0a7f5b;
+  --kg-note: #586f7a;
   --kg-node-core-bg: #0f5a45;
-  --kg-node-core-border: #1fb185;
+  --kg-node-core-border: #12996f;
   --kg-node-blue-bg: #1c6b93;
   --kg-node-blue-border: #4f9dc5;
   --kg-node-violet-bg: #4b3f7d;
@@ -263,6 +268,8 @@ html[data-theme="white"] .graph-page {
   --kg-node-dot-blue: #dff1fb;
   --kg-node-dot-violet: #ece7fb;
   --kg-node-dot-amber: #b8811c;
+  /* 选中/悬停描边要压在浅色画布上，"选中"必须比静息描边更实才看得出来 */
+  --kg-node-ring-active: #0f8f68;
   --kg-node-pulse: #2fd09b;
   --kg-node-pulse-opacity: .035;
   --kg-node-pulse-active: .1;
@@ -279,47 +286,68 @@ html[data-theme="white"] .review-page {
   --rv-shadow: 0 14px 34px #0f22330d;
   --rv-rule: #edf1f4;
   --rv-rule-soft: #f1f4f6;
-  --rv-accent: #12a97c;
-  --rv-eyebrow-muted: #7c8d96;
+  --rv-accent: #0a7f5b;
+  --rv-eyebrow-muted: #6f7f88;
   --rv-title: #0f1a20;
   --rv-subtitle: #62737c;
   --rv-ghost-border: #dde5eb;
   --rv-ghost-text: #55666f;
   --rv-ghost-hover-border: #8ed7bd;
   --rv-ghost-hover-text: #0f4a37;
-  --rv-label: #7d8e97;
+  --rv-label: #687880;
   --rv-file-icon-bg: #d9f2e9;
-  --rv-file-icon: #12a97c;
+  --rv-file-icon: #0a7f5b;
   --rv-file-title: #101a20;
-  --rv-file-meta: #6f828c;
+  --rv-file-meta: #586f7a;
   --rv-demo-border: #bcdfd0;
-  --rv-demo-text: #12996f;
-  --rv-ring-border: #2ec394;
+  --rv-demo-text: #0a7f5b;
+  --rv-ring-border: #0f9c72;
   --rv-ring-glow: inset 0 0 16px #2ec3941f, 0 0 18px #2ec3941a;
   --rv-ring-score: #0d2a22;
-  --rv-ring-label: #5a8a78;
+  --rv-ring-label: #4f7a69;
   --rv-heading: #111b21;
-  --rv-count: #7c8d96;
-  --rv-tab-text: #65767f;
-  --rv-tab-count: #93a3ab;
+  --rv-count: #586f7a;
+  --rv-tab-text: #586f7a;
+  --rv-tab-count: #7d8d95;
   --rv-tab-active-bg: #e9f8f2;
   --rv-tab-active-border: #a6ddc6;
   --rv-tab-active-text: #0c5f46;
-  --rv-tab-active-count: #12a97c;
-  --rv-pass: #12a97c;
+  --rv-tab-active-count: #0a7f5b;
+  --rv-pass: #0a7f5b;
   --rv-pass-bg: #dcf4ec;
-  --rv-warn: #a8720f;
+  --rv-warn: #9c680a;
   --rv-warn-bg: #fbeed6;
   --rv-item-title: #17232b;
-  --rv-item-text: #687a84;
-  --rv-status-pass: #12a97c;
-  --rv-status-warn: #a8720f;
+  --rv-item-text: #5f7883;
+  --rv-status-pass: #0a7f5b;
+  --rv-status-warn: #9c680a;
   --rv-chevron: #95a6ae;
   --rv-side-heading: #17232b;
-  --rv-side-icon: #12a97c;
+  --rv-side-icon: #0a7f5b;
   --rv-advice-title: #17232b;
-  --rv-advice-text: #687a84;
-  --rv-foot: #7b8b94;
+  --rv-advice-text: #586f7a;
+  --rv-foot: #586f7a;
   --rv-foot-value: #46565f;
-  --rv-note: #7a8b93;
+  --rv-note: #586f7a;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 历史对话行的「更多 / 重命名 / 删除」（深色取值见 style.css 同名规则）
+ *
+ * 这些规则是手写补充，不走生成器：style-light.css 由脚本生成，这里只需要给出白色主题的取值，
+ * 且本文件在 main.ts 里最后加载，同特异性下一定覆盖生成文件里的旧规则。
+ * ══════════════════════════════════════════════════════════════════════════ */
+/* 关键：生成的 style-light.css 里有 `html[data-theme="white"] .chat-session-list .current-chat-link{width:100%;flex:none}`，
+   特异性比 style.css 里的新布局规则高，不覆盖的话「更多」按钮会被挤到下一行；
+   flex 基准同样必须是 0（基准 auto 会让长标题把它顶到第二行） */
+html[data-theme="white"] .chat-session-list .chat-session-row .current-chat-link{flex:1 1 0;width:auto;min-width:0}
+html[data-theme="white"] .chat-session-more{color:#7b8b94}
+html[data-theme="white"] .chat-session-more:hover{background:#d7e9e2;color:#10312a}
+html[data-theme="white"] .session-menu{border-color:#e4eaee;background:#fff;box-shadow:0 12px 26px #0f22331a}
+/* 字号/对齐在这里也写一遍：白色主题下按钮相关的生成规则特异性更高，统一在此兜底
+   （字号与行高必须和 style.css 的 .session-menu-item 保持一致，否则白色主题下菜单字会变小） */
+html[data-theme="white"] .session-menu-item{color:#3f4d55;font-family:inherit;font-size:13.5px;font-weight:400;line-height:34px;text-align:left}
+html[data-theme="white"] .session-menu-item:hover{background:#f2f7f5;color:#16211f}
+html[data-theme="white"] .session-menu-item.is-danger{color:#c0473c}
+html[data-theme="white"] .session-menu-item.is-danger:hover:not(:disabled){background:#fdeeec;color:#a3372c}
+html[data-theme="white"] .session-rename-input{border-color:#9ccdb7;background:#fff;color:#14231f}

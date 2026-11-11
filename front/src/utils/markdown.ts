@@ -50,7 +50,12 @@ type ListFrame = {
 const INLINE_RE = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*)/g
 const HEADING_RE = /^(#{1,4})\s+(.*)$/
 const QUOTE_RE = /^\s*>\s?(.*)$/
-const ITEM_RE = /^([ \u3000]*)(\d{1,2}[.、)]|[-*+•])\s+(.*)$/
+/**
+ * 列表项：标记后**可以是空格，也可以紧接中文**。
+ * 模型经常写成 "-施工组织设计应明确…"（横线后无空格），
+ * 旧的 \s+ 要求会把这行当成普通段落，于是界面里出现一行字面短横线。
+ */
+const ITEM_RE = /^([ \u3000]*)(\d{1,2}[.、)]|[-*+•])(?:\s+|(?=[\u4e00-\u9fff]))(.*)$/
 /**
  * 行首条款编号：6.1.1 / 6.1.1.1（允许被 ** 包裹，也允许编号后直接接汉字）。
  * 这类行必须**独立成行**：否则模型的 "6.1.1 …\n6.1.2 …" 会被下面的段落聚合规则用空格拼成一段，
@@ -84,22 +89,46 @@ export function splitSubitemRuns(line: string): string[] {
 /** 带编号层级的条款草稿（解析期与流式期共用） */
 export type ClauseDraft = { number: string; depth: number; inline: Inline[]; subitems: Inline[][] }
 
-/** 渲染用条款：顶层带显示编号（1. / 2.），子层只用层级（绿点标记），不再显示 4.1 */
-export type LabeledClause = { label: string; level: number; inline: Inline[]; subitems: Inline[][] }
+/**
+ * 渲染用条款：顶层并列（≥2 条）时编号 1./2.；顶层只有一条时不编号（solo）；
+ * 子层只给层级（level 1/2…），由渲染层用绿点/空心点表示，不出现 5.7.4.1 这类派生编号。
+ */
+export type LabeledClause = {
+  label: string
+  level: number
+  /** 顶层唯一 → 不编号 */
+  solo: boolean
+  /** 顶层唯一、且下面还有子条款 → 渲染层按小节标题呈现 */
+  soloTitle: boolean
+  inline: Inline[]
+  subitems: Inline[][]
+}
 
 /**
- * 生成层级显示编号：以本组最浅层为顶层。
- * 顶层给编号（`1.` `2.`），子层不给编号，只标出层级（level 1/2…），由渲染层用绿点表示，
- * 这样回答里既不出现原文的 `6.6.4.1`，也不会出现"4.1"这种派生编号。
+ * 生成层级显示编号：以**整条回答**最浅的条款层为顶层。
+ * · 顶层并列（≥2 条）→ 编号 1./2./3.，同一回答内连续；
+ * · 顶层只有一条 → 不编号（solo），避免"只有一条内容却标 1."；若它下面还有子条款，
+ *   额外标 soloTitle，由渲染层按小节标题呈现；
+ * · 子层不给编号，只标层级（level 1/2…），由渲染层用绿点表示。
+ * 注意：入参必须是**整条回答**的全部条款——按"连续块"分别调用会让编号重新从 1. 开始。
  */
 export function labelClauses(drafts: ClauseDraft[]): LabeledClause[] {
   if (!drafts.length) return []
   const minDepth = Math.min(...drafts.map(draft => draft.depth))
+  const solo = drafts.filter(draft => draft.depth === minDepth).length === 1
+  const hasChild = drafts.some(draft => draft.depth > minDepth)
   let topCount = 0
   return drafts.map(draft => {
     const level = Math.max(0, draft.depth - minDepth)
-    const label = level === 0 ? `${++topCount}.` : ''
-    return { label, level, inline: draft.inline, subitems: draft.subitems }
+    const isTop = level === 0
+    return {
+      label: isTop && !solo ? `${++topCount}.` : '',
+      level,
+      solo: isTop && solo,
+      soloTitle: isTop && solo && hasChild,
+      inline: draft.inline,
+      subitems: draft.subitems,
+    }
   })
 }
 
@@ -126,7 +155,10 @@ export type StreamingBlock =
   | { kind: 'text'; inline: Inline[] }
 
 /**
- * 流式输出用的行级分块：一边接收 token 一边就按"列表 + 段落"的形态渲染，
+ * 流式输出用的行级分块（**MessageBody 已不再使用**，改用 parseMarkdown + splitStreamingTail
+ * 统一渲染，见 splitStreamingTail 的说明；此函数保留给只需要"条款 / 纯文本"两级分块的场景）。
+ * <p>
+ * 一边接收 token 一边就按"列表 + 段落"的形态渲染，
  * 不用等回答结束再做结构化解析（那样会出现"流式时是 6.7.1、结束后突然变成 1."的跳变）。
  * <p>
  * 行内标记（**加粗**、`代码`、*斜体*）在这里就用 {@link parseInline} 处理：它只认**成对**的标记，
@@ -134,12 +166,17 @@ export type StreamingBlock =
  */
 export function streamingBlocks(text: string): StreamingBlock[] {
   const blocks: StreamingBlock[] = []
+  const runs: ClauseDraft[][] = []
+  const clauseBlocks: Extract<StreamingBlock, { kind: 'clauses' }>[] = []
   let pending: string[] = []
   let drafts: ClauseDraft[] = []
 
   const flushClauses = () => {
     if (!drafts.length) return
-    blocks.push({ kind: 'clauses', items: labelClauses(drafts) })
+    const block: Extract<StreamingBlock, { kind: 'clauses' }> = { kind: 'clauses', items: [] }
+    runs.push(drafts)
+    clauseBlocks.push(block)
+    blocks.push(block)
     drafts = []
   }
 
@@ -177,7 +214,27 @@ export function streamingBlocks(text: string): StreamingBlock[] {
   }
   flushText()
   flushClauses()
+
+  // 编号基准是整条回答：一次算完再按顺序回填到各条款块，否则流式与最终渲染的编号会不一致
+  const labels = labelClauses(runs.flat())
+  let cursor = 0
+  runs.forEach((run, i) => {
+    clauseBlocks[i].items = labels.slice(cursor, cursor + run.length)
+    cursor += run.length
+  })
   return blocks
+}
+
+/**
+ * 流式渲染用：把累积文本切成"已经写完的完整行"和"正在输入的最后一行"。
+ * <p>
+ * 完整行交给 {@link parseMarkdown} 结构化，最后一行按纯文本显示——
+ * 这样**流式期间的结构和结束后完全一致**，不会再出现"输出时是一串横线、
+ * 全部输出完才变成列表"的跳变（旧实现在流式期只识别条款行，认不出 Markdown 列表）。
+ */
+export function splitStreamingTail(text: string): { stable: string; tail: string } {
+  const cut = text.lastIndexOf('\n')
+  return cut < 0 ? { stable: '', tail: text } : { stable: text.slice(0, cut + 1), tail: text.slice(cut + 1) }
 }
 
 export function parseMarkdown(source: string): MdNode[] {

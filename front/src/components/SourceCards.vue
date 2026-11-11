@@ -15,25 +15,17 @@ const cards = computed(() => {
     return true
   })
 })
-
-// 来源卡片只展示文本来源信息，不打开文档预览。
-const hint = (source: Source) => {
-  const parts = [source.docName]
-  if (source.pageNum) parts.push(`第 ${source.pageNum} 页`)
-  if (source.sectionTitle) parts.push(source.sectionTitle)
-  if (source.excerpt) parts.push(source.excerpt)
-  return parts.join('\n')
-}
 </script>
 
 <template>
   <div v-if="cards.length" class="source-cards">
     <div class="source-cards-title">参考来源</div>
+    <!-- 刻意不挂 title：原生悬浮提示是个黑色框，太长且压住正文（章节/摘要只在悬浮框里出现过，
+         现在需要看内容就等后续的"来源预览"，不再用悬浮框展示） -->
     <div
       v-for="(source, i) in cards"
       :key="i"
       class="source-card"
-      :title="hint(source)"
     >
       <FileText :size="14" />
       <span class="source-card-name">{{ source.docName }}</span>

@@ -29,6 +29,7 @@ public class IndexWriteService {
     private final DocChunkRepository childRepository;
     private final KbDocumentRepository documentRepository;
     private final IndexTaskRepository taskRepository;
+    private final AnswerCacheService answerCache;
 
     /**
      * 先写父块拿主键、再写带 parent_id 的子块，最后清理旧版并更新文档状态。
@@ -92,6 +93,9 @@ public class IndexWriteService {
         task.setStatus(IndexTask.TaskStatus.DONE);
         task.setFinishedAt(LocalDateTime.now());
         taskRepository.save(task);
+
+        // 索引内容变了：让答案缓存整体失效，避免"资料换了、答案还是旧的"
+        answerCache.invalidate();
     }
 
     /** 一个子块与其父块顺序号及向量。 */

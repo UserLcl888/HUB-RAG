@@ -22,6 +22,7 @@ public class KnowledgeBaseService {
     private final DocParentChunkRepository parentChunkRepository;
     private final MinioStorageService minioService;
     private final IndexService indexService;
+    private final AnswerCacheService answerCache;
 
     @Transactional
     public KnowledgeBase create(KnowledgeBaseCreateRequest req) {
@@ -115,6 +116,9 @@ public class KnowledgeBaseService {
 
         // 异步删除 MinIO 文件（不影响主流程）
         minioService.delete(doc.getMinioPath());
+
+        // 资料已经变了：答案缓存整体失效
+        answerCache.invalidate();
 
         log.info("[KB] 文档删除：docId={}，fileName={}", docId, doc.getFileName());
     }

@@ -1,9 +1,21 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="white">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#08111b" />
+    <meta name="theme-color" content="#f6f8fa" />
+    <script>
+      // 默认白色；只有用户明确选过深色才切过去（在首屏渲染前执行，避免闪一下白色）。
+      // 存储键带 v2：早期版本存过 'dark' 的浏览器会忽略旧记录，统一先落到白色。
+      try {
+        if (localStorage.getItem('hbnt-theme-v2') === 'dark') {
+          document.documentElement.dataset.theme = 'dark'
+          document.querySelector('meta[name="theme-color"]').content = '#08111b'
+        }
+      } catch {
+        // 存储不可用时沿用默认白色主题
+      }
+    </script>
     <meta name="description" content="农田 AI 助手 — 政策知识与农田建设服务工作台" />
     <title>农田 AI 助手</title>
   </head>

@@ -6,12 +6,13 @@ import DocumentReview from './views/DocumentReview.vue'
 import MessageBody from './components/MessageBody.vue'
 import SourceCards from './components/SourceCards.vue'
 import {
-  chatStreamUrl, createKnowledgeBase, deleteDocument, downloadDocument,
+  chatStreamUrl, createKnowledgeBase, deleteChatSession, deleteDocument, downloadDocument,
   getChatMessages, getDocumentStatus, listChatSessions,
-  listDocuments, listKnowledgeBases, startDocumentParsing, uploadDocument,
+  listDocuments, listKnowledgeBases, renameChatSession, startDocumentParsing, uploadDocument,
   type ChatMessage as SavedChatMessage,
   type ChatSession as SavedChatSession,
   type Document as RagDocument,
+  type KnowledgeBase,
   type Source,
 } from './api/rag'
 import {
@@ -50,15 +51,29 @@ const toast = ref('')
 const showUpload = ref(route.path === '/documents' && route.query.upload === '1')
 const ragKnowledgeBaseId = ref<number | null>(null)
 const ragDocuments = ref<RagDocument[]>([])
+const knowledgeBases = ref<KnowledgeBase[]>([])
 const backendEnabled = ref(false)
 const chatSessionId = ref<string | null>(null)
 const chatSessions = ref<SavedChatSession[]>([])
 const loadingHistory = ref(false)
 const showMobileHistory = ref(false)
-const showDocumentPicker = ref(false)
-const loadingDocumentPicker = ref(false)
-const pendingDocumentId = ref<number | null>(null)
+/** 历史对话行的更多操作：当前展开菜单的会话 id */
+const menuSessionId = ref<string | null>(null)
+/** 删除前的行内二次确认：待确认删除的会话 id */
+const deleteTargetId = ref<string | null>(null)
+/** 行内重命名：正在编辑的会话 id 与草稿标题 */
+const editingSessionId = ref<string | null>(null)
+const editingTitle = ref('')
 const selectedDocumentId = ref<number | null>(null)
+/** 当前会话在服务端绑定的文档；为 null 表示这个会话固定在"整个知识库"范围 */
+const sessionDocId = ref<number | null>(null)
+
+/**
+ * 默认知识库：不主动指定文件时，整个会话都在这个库里检索。
+ * 后端的 docId 为空 = 检索整个知识库，所以答案的来源可以同时来自库里多份文档。
+ * 库里找不到这个 id 时退回列表第一个（当前库里只有一个知识库，实际用的就是它）。
+ */
+const DEFAULT_KNOWLEDGE_BASE_ID = 2
 const asking = ref(false)
 const parsingRequests = ref(new Set<number>())
 let activeStream: EventSource | null = null
@@ -69,12 +84,24 @@ let toastTimer: number | undefined
 const allFiles = computed(() => ragDocuments.value.map(toPolicyFile))
 const parsedDocuments = computed(() => ragDocuments.value.filter(document => document.status === 'DONE'))
 const selectedDocument = computed(() => parsedDocuments.value.find(document => document.id === selectedDocumentId.value) ?? null)
+/** 默认知识库：配置的 id 优先，找不到就用列表第一个 */
+const defaultKnowledgeBase = computed(() => knowledgeBases.value.find(base => base.id === DEFAULT_KNOWLEDGE_BASE_ID)
+  ?? knowledgeBases.value[0]
+  ?? null)
+/** 当前提问用的知识库：选了具体文件就跟文件走，否则用默认知识库 */
+const activeKnowledgeBaseId = computed(() => selectedDocument.value?.kbId
+  ?? defaultKnowledgeBase.value?.id
+  ?? ragKnowledgeBaseId.value)
+const activeKnowledgeBaseName = computed(() => defaultKnowledgeBase.value?.name ?? '')
+/** 只有"会话确实绑了文档、但那份文档已不可用"才算异常；整库会话不算 */
 const sessionDocumentUnavailable = computed(() => Boolean(
-  chatSessionId.value && !selectedDocument.value,
+  chatSessionId.value && sessionDocId.value !== null && !selectedDocument.value,
 ))
-const selectionGreeting = computed(() => selectedDocument.value
-  ? `你当前选择的是《${selectedDocument.value.fileName}》。你想问什么？`
-  : '')
+const selectionGreeting = computed(() => {
+  if (selectedDocument.value) return `你当前选择的是《${selectedDocument.value.fileName}》。你想问什么？`
+  if (activeKnowledgeBaseName.value) return `当前检索范围是《${activeKnowledgeBaseName.value}》里的全部资料。你想问什么？`
+  return ''
+})
 const standardFileCount = computed(() => allFiles.value.filter(file => file.type === '标准规范').length)
 const visibleFiles = computed(() => {
   const query = searchText.value.trim().toLowerCase()
@@ -192,19 +219,15 @@ function findSession(sessionId: string) {
   return chatSessions.value.find(session => session.id === sessionId) ?? null
 }
 
+/**
+ * 会话绑定的文档。
+ * docId 为空 = 这个会话就是"整个知识库"范围（默认），不能再退回某一份文档，
+ * 否则界面会显示成"只检索某一份"，与后端的实际范围不一致。
+ */
 function resolveSessionDocument(session: SavedChatSession) {
+  if (typeof session.docId !== 'number') return null
   const documentsInScope = parsedDocuments.value.filter(document => session.kbIds.includes(document.kbId))
-  const backendDocument = typeof session.docId === 'number'
-    ? documentsInScope.find(document => document.id === session.docId)
-    : null
-  if (session.docId !== null && session.docId !== undefined) {
-    return backendDocument ?? null
-  }
-  const localDocumentId = getChatDocumentId(session.id)
-  const localDocument = typeof localDocumentId === 'number'
-    ? documentsInScope.find(document => document.id === localDocumentId)
-    : null
-  return localDocument ?? documentsInScope[0] ?? null
+  return documentsInScope.find(document => document.id === session.docId) ?? null
 }
 
 async function openChatSession(sessionId: string) {
@@ -223,6 +246,7 @@ async function openChatSession(sessionId: string) {
     if (requestVersion !== chatSession.value) return
     const session = findSession(sessionId)
     chatSessionId.value = sessionId
+    sessionDocId.value = session && typeof session.docId === 'number' ? session.docId : null
     selectedDocumentId.value = session
       ? resolveSessionDocument(session)?.id ?? null
       : getChatDocumentId(sessionId)
@@ -236,6 +260,110 @@ async function openChatSession(sessionId: string) {
     }
   } finally {
     if (requestVersion === chatSession.value) loadingHistory.value = false
+  }
+}
+
+/** 历史对话的操作菜单：锚点样式（fixed 浮层，靠右对齐到「更多」按钮） */
+const menuStyle = ref<Record<string, string>>({})
+/** 菜单归属的会话（菜单被 teleport 到 body，渲染在 v-for 之外，这里按 id 取回） */
+const menuSession = computed(() => chatSessions.value.find(session => session.id === menuSessionId.value) ?? null)
+/** 菜单高度估算（两项 26px + 内边距 + 边框），用于判断是否需要向上翻转 */
+const SESSION_MENU_HEIGHT = 70
+
+/* ── 历史对话行的更多操作：重命名 / 删除（左侧列表） ───────────── */
+
+/** 展开/收起某一行的操作菜单（同时只开一个） */
+function toggleSessionMenu(sessionId: string, event: MouseEvent) {
+  if (menuSessionId.value === sessionId) {
+    closeSessionMenu()
+    return
+  }
+  const anchor = event.currentTarget as HTMLElement | null
+  const rect = anchor?.getBoundingClientRect()
+  const viewportHeight = window.innerHeight
+  // 下方放不下就翻到按钮上方，避免浮层超出视口
+  const fitsBelow = rect ? viewportHeight - rect.bottom >= SESSION_MENU_HEIGHT : true
+  const top = fitsBelow
+    ? (rect ? rect.bottom + 4 : 8)
+    : Math.max(8, (rect ? rect.top : 0) - SESSION_MENU_HEIGHT - 4)
+  menuStyle.value = { top: `${top}px`, left: `${rect ? rect.right : 0}px` }
+  menuSessionId.value = sessionId
+  deleteTargetId.value = null
+}
+
+function closeSessionMenu() {
+  menuSessionId.value = null
+  deleteTargetId.value = null
+}
+
+/** 点页面空白处收起菜单（菜单与行内按钮都做了 @click.stop，不会误触） */
+function handleDocumentClick() {
+  if (menuSessionId.value) closeSessionMenu()
+}
+
+/** 列表滚动 / 窗口尺寸变化时收起菜单：浮层是固定定位，锚点一动就对不齐了 */
+function handleMenuAnchorLost() {
+  if (menuSessionId.value) closeSessionMenu()
+}
+
+/** 进入行内重命名：标题换成输入框并选中全文 */
+async function startRename(session: SavedChatSession) {
+  closeSessionMenu()
+  editingSessionId.value = session.id
+  editingTitle.value = session.title ?? ''
+  await nextTick()
+  // v-for 里的 template ref 在 Vue 3 里会变成数组，这里直接查（同一时刻只可能有一个输入框）
+  const input = document.querySelector<HTMLInputElement>('.session-rename-input')
+  input?.focus()
+  input?.select()
+}
+
+function cancelRename() {
+  editingSessionId.value = null
+  editingTitle.value = ''
+}
+
+/**
+ * 提交重命名：Enter 与失焦都会触发，所以先把编辑态收掉，保证只提交一次；
+ * 标题为空或没改动就直接退出，不打扰后端。
+ */
+async function confirmRename(session: SavedChatSession) {
+  if (editingSessionId.value !== session.id) return
+  const title = editingTitle.value.trim()
+  const original = (session.title ?? '').trim()
+  editingSessionId.value = null
+  editingTitle.value = ''
+  if (!title || title === original) return
+  try {
+    const updated = await renameChatSession(session.id, title)
+    const target = findSession(session.id)
+    if (target) target.title = updated.title ?? title
+    notify('已重命名')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : '重命名失败')
+  }
+}
+
+function askDelete(sessionId: string) {
+  deleteTargetId.value = sessionId
+}
+
+/** 确认删除：后端软删除 → 本地列表移除；删的是当前会话就回到空白的新会话 */
+async function confirmDelete(session: SavedChatSession) {
+  if (asking.value) {
+    notify('请等待当前回答完成后再删除会话')
+    return
+  }
+  try {
+    await deleteChatSession(session.id)
+    chatSessions.value = chatSessions.value.filter(item => item.id !== session.id)
+    if (chatSessionId.value === session.id) {
+      await startNewChat(null)
+    }
+    closeSessionMenu()
+    notify('会话已删除')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : '删除失败')
   }
 }
 
@@ -261,10 +389,11 @@ function toPolicyFile(document: RagDocument): PolicyFile {
 
 async function loadRagDocuments() {
   try {
-    const knowledgeBases = await listKnowledgeBases()
-    ragKnowledgeBaseId.value = knowledgeBases[0]?.id ?? null
-    ragDocuments.value = knowledgeBases.length
-      ? (await Promise.all(knowledgeBases.map(base => listDocuments(base.id)))).flat()
+    const bases = await listKnowledgeBases()
+    knowledgeBases.value = bases
+    ragKnowledgeBaseId.value = (bases.find(base => base.id === DEFAULT_KNOWLEDGE_BASE_ID) ?? bases[0])?.id ?? null
+    ragDocuments.value = bases.length
+      ? (await Promise.all(bases.map(base => listDocuments(base.id)))).flat()
       : []
     ragDocuments.value.sort((a, b) => Date.parse(b.uploadedAt) - Date.parse(a.uploadedAt))
     backendEnabled.value = true
@@ -274,6 +403,7 @@ async function loadRagDocuments() {
   } catch (error) {
     backendEnabled.value = false
     ragDocuments.value = []
+    knowledgeBases.value = []
     notify(error instanceof Error ? error.message : '后端未连接')
   }
 }
@@ -307,6 +437,8 @@ function startStatusPolling() {
 watch(() => route.fullPath, () => {
   showUpload.value = route.path === '/documents' && route.query.upload === '1'
   showMobileHistory.value = false
+  // 会话操作菜单是 teleport 到 body 的浮层，路由一换必须收起（否则会飘在新页面上）
+  if (menuSessionId.value) closeSessionMenu()
   if (route.path === '/documents') {
     searchText.value = typeof route.query.tag === 'string' ? route.query.tag : ''
   }
@@ -321,7 +453,8 @@ onMounted(() => {
 function handlePageKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
     showUpload.value = false
-    showDocumentPicker.value = false
+    if (menuSessionId.value) closeSessionMenu()
+    if (editingSessionId.value) cancelRename()
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && activePage.value === 'documents') {
     event.preventDefault()
@@ -331,6 +464,14 @@ function handlePageKeydown(event: KeyboardEvent) {
 
 onMounted(() => window.addEventListener('keydown', handlePageKeydown))
 onUnmounted(() => window.removeEventListener('keydown', handlePageKeydown))
+// 历史对话的操作菜单：点页面其他位置、或列表滚动/窗口变尺寸时收起
+// （scroll 不冒泡，用捕获阶段在 window 上监听才能拿到列表内的滚动）
+onMounted(() => document.addEventListener('click', handleDocumentClick))
+onUnmounted(() => document.removeEventListener('click', handleDocumentClick))
+onMounted(() => window.addEventListener('scroll', handleMenuAnchorLost, true))
+onUnmounted(() => window.removeEventListener('scroll', handleMenuAnchorLost, true))
+onMounted(() => window.addEventListener('resize', handleMenuAnchorLost))
+onUnmounted(() => window.removeEventListener('resize', handleMenuAnchorLost))
 onUnmounted(() => {
   activeStream?.close()
   window.clearInterval(statusTimer)
@@ -351,26 +492,33 @@ function openUploadFromHome() {
 
 /**
  * 首页中部的"大家都在问"与"热门标签"：**写死的展示内容**。
- * 点击只切换选中高亮（再点一次取消），不跳转、不填充输入框、不发起提问。
+ * 点击直接发起提问：问题写进输入框并立即发送，回答来自默认知识库。
  */
 const hotQuestions = [
-  '隐蔽工程（如管道）如何进行采集与调查？',
-  '工程设施采集时，如何处理与地块的相对位置关系？',
-  '高标准农田项目验收需要准备哪些材料？',
-  '树木占用耕地的判定标准是什么？',
-  '哪些关联工程设施需要采集调查？',
+  '建设规划布局要做到什么程度?',
+  '施工组织设计怎么做?',
+  '什么是田块整治工程？',
+  '如何进行项目工程设计?',
 ]
 const hotTags = [
-  '高标准农田', '农田建设', '质量验收', '设计参考', '项目管理',
-  '技术标准', '档案管理', '政策文件', 'GB/T30600-2022',
+  '高标准农田', '农田建设', '质量验收', '设计参考', '项目管理', '技术标准', '政策文件',
 ]
 const activeHotQuestion = ref<string | null>(null)
-const activeHotTag = ref<string | null>(null)
-function toggleHotQuestion(item: string) {
-  activeHotQuestion.value = activeHotQuestion.value === item ? null : item
-}
-function toggleHotTag(tag: string) {
-  activeHotTag.value = activeHotTag.value === tag ? null : tag
+
+/**
+ * 点击热门问题：**直接发起提问**（进对话页，不再只是高亮）。
+ * 这 4 个问题在后端预热过答案缓存（Redis，7 天），命中时基本秒回；
+ * 对话照常落库，历史里能看到这次问答。
+ */
+async function askHotQuestion(item: string) {
+  if (asking.value || loadingHistory.value) {
+    notify('请等当前回答结束后再试')
+    return
+  }
+  activeHotQuestion.value = item
+  question.value = item
+  await nextTick()
+  ask()
 }
 /** 热门问题序号：1 → "01" */
 function hotIndex(index: number) {
@@ -378,17 +526,26 @@ function hotIndex(index: number) {
 }
 
 /**
- * 主题切换：深色（默认）↔ 白色。
- * 本工程样式是硬编码色值（451 处 hex，只有 9 个 CSS 变量），无法靠改变量换肤，
- * 因此对 .app-shell 整体做色调翻转；弹窗与提示已放在 .app-shell 之外，
- * 不会受 filter 影响（filter 会把祖先变成 position:fixed 的包含块）。
+ * 历史对话标题固定显示前 N 个字：短的照原样（不补空格），长的直接截断（不加省略号）。
+ * 用字符数而不是 CSS 裁切，是因为按像素裁会把最后一个字切成半个。
+ * 10 是按侧栏文字区宽度定的：256px 侧栏减去内边距/图标/「更多」按钮后约 170px，
+ * 14.5px 字号下 10 个汉字 ≈ 145px，留足余量；取 12 就会顶到边缘被再切一次。
  */
-const whiteMode = ref(false)
+const SESSION_TITLE_CHARS = 10
+function shortSessionTitle(title: string | null) {
+  const text = (title ?? '').trim() || '未命名对话'
+  return Array.from(text).slice(0, SESSION_TITLE_CHARS).join('')
+}
+
+/** 主题切换：首次访问默认白色；只有用户明确选过深色才用深色。 */
+const whiteMode = ref(document.documentElement.dataset.theme !== 'dark')
 function applyWhiteMode(value: boolean) {
   whiteMode.value = value
   document.documentElement.dataset.theme = value ? 'white' : 'dark'
+  document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    ?.setAttribute('content', value ? '#f6f8fa' : '#08111b')
   try {
-    window.localStorage.setItem('hbnt-theme', value ? 'white' : 'dark')
+    window.localStorage.setItem('hbnt-theme-v2', value ? 'white' : 'dark')
   } catch {
     // 隐私模式等场景下 localStorage 不可用，忽略即可
   }
@@ -399,46 +556,38 @@ function toggleWhiteMode() {
 function restoreWhiteMode() {
   let saved: string | null = null
   try {
-    saved = window.localStorage.getItem('hbnt-theme')
+    saved = window.localStorage.getItem('hbnt-theme-v2')
   } catch {
     saved = null
   }
-  whiteMode.value = saved === 'white'
+  // 默认白色：只有明确存过 'dark' 才用深色
+  whiteMode.value = saved !== 'dark'
   document.documentElement.dataset.theme = whiteMode.value ? 'white' : 'dark'
+  document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    ?.setAttribute('content', whiteMode.value ? '#f6f8fa' : '#08111b')
 }
-async function openDocumentPicker() {
-  if (showDocumentPicker.value) return
-  showDocumentPicker.value = true
-  pendingDocumentId.value = null
-  showMobileHistory.value = false
-  loadingDocumentPicker.value = true
-  try {
-    await loadRagDocuments()
-  } finally {
-    loadingDocumentPicker.value = false
+/** 新建会话：不绑定具体文件，默认检索整个默认知识库（答案可来自库里多份文档） */
+async function startDefaultChat() {
+  await startNewChat(null)
+  if (backendEnabled.value && !defaultKnowledgeBase.value) {
+    notify('知识库里还没有资料，请先上传并解析文档')
   }
 }
-async function startNewChat(document: RagDocument) {
+async function startNewChat(document: RagDocument | null) {
   activeStream?.close()
   activeStream = null
   asking.value = false
   chatSessionId.value = null
+  sessionDocId.value = null
   chatSession.value += 1
   loadingHistory.value = false
-  selectedDocumentId.value = document.id
+  selectedDocumentId.value = document?.id ?? null
   chatMessages.value = []
   question.value = ''
-  showDocumentPicker.value = false
   showMobileHistory.value = false
   await nextTick()
   messageArea.value?.scrollTo({ top: 0, behavior: 'instant' })
   questionInput.value?.focus()
-}
-async function confirmDocumentSelection() {
-  const document = parsedDocuments.value.find(item => item.id === pendingDocumentId.value)
-  if (!document || loadingDocumentPicker.value) return
-  await router.push('/')
-  await startNewChat(document)
 }
 async function scrollToLatestMessage(behavior: ScrollBehavior = 'smooth') {
   await nextTick()
@@ -481,10 +630,15 @@ function ask() {
   const text = value.trim()
   if (!text || asking.value || loadingHistory.value) return
   const document = selectedDocument.value
-  if (!backendEnabled.value || !document) {
-    notify(sessionDocumentUnavailable.value
-      ? '当前会话文档不可用，请重新新建会话并选择已解析文档'
-      : '请先新建会话并选择一份已解析的文档')
+  const kbId = activeKnowledgeBaseId.value
+  if (!backendEnabled.value || kbId === null) {
+    notify(backendEnabled.value
+      ? '知识库里还没有已解析的资料，请先上传并解析文档'
+      : '后端未连接，暂时无法提问')
+    return
+  }
+  if (sessionDocumentUnavailable.value) {
+    notify('当前会话绑定的文档已不可用，请新建会话')
     return
   }
   const session = chatSession.value
@@ -495,8 +649,9 @@ function ask() {
   const answerIndex = chatMessages.value.push({
     role: 'assistant', text: '正在检索知识库…', streaming: true,
   }) - 1
+  // docId 为空 = 检索整个知识库，答案来源可以同时来自库里多份文档
   const eventSource = new EventSource(chatStreamUrl(
-    text, [document.kbId], chatSessionId.value, document.id,
+    text, [kbId], chatSessionId.value, document?.id ?? null,
   ))
   activeStream = eventSource
   let receivedToken = false
@@ -505,7 +660,8 @@ function ask() {
     if (session === chatSession.value) {
       const sessionId = (event as MessageEvent).data as string
       chatSessionId.value = sessionId
-      saveChatDocumentId(sessionId, document.id)
+      sessionDocId.value = document?.id ?? null
+      if (document) saveChatDocumentId(sessionId, document.id)
     }
   })
   eventSource.addEventListener('status', event => {
@@ -692,9 +848,6 @@ async function askAboutFile(file: PolicyFile) {
           <Moon v-else :size="14" />
           <span>{{ whiteMode ? '白色' : '深色' }}</span>
         </button>
-        <span class="status-dot"></span>
-        <span>演示空间</span>
-        <button class="avatar" aria-label="个人中心">林</button>
       </div>
       <button class="mobile-menu" @click="navigate(activePage === 'documents' ? '/' : '/documents')"><MoreHorizontal /></button>
     </header>
@@ -702,20 +855,47 @@ async function askAboutFile(file: PolicyFile) {
     <Transition name="page-fade">
     <main v-if="activePage === 'home'" key="home" class="home-page home-workspace">
       <aside class="workspace-sidebar" :class="{ 'is-mobile-open': showMobileHistory }" aria-label="问答快捷导航">
-        <button class="new-chat-button" @click="openDocumentPicker"><Plus :size="17" />新建会话</button>
+        <button class="new-chat-button" @click="startDefaultChat"><Plus :size="17" />新建会话</button>
         <div class="sidebar-section-title">历史对话</div>
         <div class="chat-session-list">
-          <button
+          <div
             v-for="session in chatSessions"
             :key="session.id"
-            class="current-chat-link"
-            :class="{ 'is-active': chatSessionId === session.id }"
-            :title="session.title || '未命名对话'"
-            :aria-current="chatSessionId === session.id ? 'true' : undefined"
-            @click="openChatSession(session.id)"
+            class="chat-session-row"
+            :class="{ 'is-active': chatSessionId === session.id, 'is-menu-open': menuSessionId === session.id }"
           >
-            <MessageCircle :size="16" /><span>{{ session.title || '未命名对话' }}</span>
-          </button>
+            <!-- 行内重命名：标题变成输入框，Enter 保存 / Esc 取消 / 失焦保存 -->
+            <input
+              v-if="editingSessionId === session.id"
+              v-model="editingTitle"
+              class="session-rename-input"
+              maxlength="200"
+              aria-label="重命名会话"
+              @click.stop
+              @keydown.enter.prevent="confirmRename(session)"
+              @keydown.esc.prevent="cancelRename"
+              @blur="confirmRename(session)"
+            />
+            <template v-else>
+              <button
+                class="current-chat-link"
+                :class="{ 'is-active': chatSessionId === session.id }"
+                :aria-current="chatSessionId === session.id ? 'true' : undefined"
+                :aria-label="session.title || '未命名对话'"
+                @click="openChatSession(session.id)"
+              >
+                <MessageCircle :size="16" /><span>{{ shortSessionTitle(session.title) }}</span>
+              </button>
+              <!-- 悬浮（或当前会话）时出现在行右侧、垂直居中；不放 title：避免浏览器黑框提示 -->
+              <button
+                class="chat-session-more"
+                type="button"
+                :aria-label="`「${session.title || '未命名对话'}」的更多操作`"
+                :aria-expanded="menuSessionId === session.id ? 'true' : 'false'"
+                @click.stop="toggleSessionMenu(session.id, $event)"
+              ><MoreHorizontal :size="15" /></button>
+            </template>
+          </div>
           <p v-if="!chatSessions.length" class="sidebar-empty">还没有历史对话，选择文档后开始提问。</p>
         </div>
         <div class="sidebar-divider"></div>
@@ -730,7 +910,7 @@ async function askAboutFile(file: PolicyFile) {
           <div><strong>智能问答</strong><span>基于政策资料的农田建设助手</span></div>
           <div class="workspace-header-actions">
             <button class="header-history-button" :aria-expanded="showMobileHistory" aria-label="历史对话" @click="showMobileHistory = !showMobileHistory"><MessageCircle :size="16" />历史对话</button>
-            <button class="header-new-chat" @click="openDocumentPicker"><Plus :size="16" />新建会话</button>
+            <button class="header-new-chat" @click="startDefaultChat"><Plus :size="16" />新建会话</button>
             <button @click="navigate('/documents')"><FolderOpen :size="16" />政策文件<ArrowRight :size="14" /></button>
           </div>
         </div>
@@ -742,7 +922,7 @@ async function askAboutFile(file: PolicyFile) {
             <h1>从一个问题开始，<span>找到建设的依据。</span></h1>
             <p>围绕农田建设、项目管理和政策规范，为你梳理清晰的思路。</p>
             <section class="home-prompts" aria-label="热门问题与热门标签">
-              <div class="home-prompts-title"><Sparkles :size="15" />大家都在问<em>· 热门问题</em></div>
+              <div class="home-prompts-title"><Sparkles :size="15" />大家都在问<em>· 点击直接提问</em></div>
               <div class="home-hot-grid">
                 <button
                   v-for="(item, index) in hotQuestions"
@@ -751,7 +931,7 @@ async function askAboutFile(file: PolicyFile) {
                   class="home-hot-item"
                   :class="{ 'is-active': activeHotQuestion === item }"
                   :aria-pressed="activeHotQuestion === item"
-                  @click="toggleHotQuestion(item)"
+                  @click="askHotQuestion(item)"
                 >
                   <span class="home-hot-index">{{ hotIndex(index) }}</span>
                   <span class="home-hot-text">{{ item }}</span>
@@ -760,20 +940,18 @@ async function askAboutFile(file: PolicyFile) {
               </div>
               <div class="home-tags">
                 <span class="home-tags-label">热门标签</span>
+                <!-- 只做悬停 / 按下时的颜色反馈：不保留选中态，鼠标移开即复原 -->
                 <button
                   v-for="tag in hotTags"
                   :key="tag"
                   type="button"
                   class="home-tag"
-                  :class="{ 'is-active': activeHotTag === tag }"
-                  :aria-pressed="activeHotTag === tag"
-                  @click="toggleHotTag(tag)"
                 >{{ tag }}</button>
               </div>
             </section>
           </div>
           <div v-else class="conversation-thread">
-            <div class="thread-title"><span class="live-dot"></span>当前对话 <span v-if="selectedDocument" :title="selectedDocument.fileName">· 《{{ selectedDocument.fileName }}》</span><span v-else-if="sessionDocumentUnavailable">· 当前会话文档不可用，请重新新建会话并选择已解析文档</span><span v-else>· 未绑定文档，仅可查看历史</span></div>
+            <div class="thread-title"><span class="live-dot"></span>当前对话 <span v-if="selectedDocument" :title="selectedDocument.fileName">· 《{{ selectedDocument.fileName }}》</span><span v-else-if="sessionDocumentUnavailable">· 当前会话文档不可用，请重新新建会话并选择已解析文档</span><span v-else>· 检索范围：《{{ activeKnowledgeBaseName || '知识库' }}》全部资料</span></div>
             <div v-if="selectedDocument" class="conversation-message assistant">
               <span class="conversation-avatar"><Sparkles :size="17" /></span>
               <div class="conversation-content">
@@ -796,10 +974,10 @@ async function askAboutFile(file: PolicyFile) {
         <div class="composer-wrap">
           <div class="chat-composer">
             <label class="sr-only" for="chat-question">向农田 AI 助手提问</label>
-            <textarea id="chat-question" ref="questionInput" v-model="question" rows="2" :disabled="!selectedDocument || loadingHistory" :placeholder="selectedDocument ? `向《${selectedDocument.fileName}》提问 · Enter 发送` : sessionDocumentUnavailable ? '当前会话文档不可用，请重新新建会话并选择已解析文档' : '请先新建会话并选择已解析文档'" @keydown="handleChatKeydown"></textarea>
-            <div class="composer-footer"><span><ShieldCheck :size="14" />AI 生成内容仅供参考，正式业务请以文件为准</span><button :disabled="!selectedDocument || !question.trim() || asking || loadingHistory" @click="ask()">发送<ArrowUp :size="16" /></button></div>
+            <textarea id="chat-question" ref="questionInput" v-model="question" rows="2" :disabled="!activeKnowledgeBaseId || loadingHistory" :placeholder="selectedDocument ? `向《${selectedDocument.fileName}》提问 · Enter 发送` : sessionDocumentUnavailable ? '当前会话文档不可用，请新建会话' : activeKnowledgeBaseId ? '向高标准农田建设智能AI助手提问 · Enter 发送' : '请先上传并解析文档'" @keydown="handleChatKeydown"></textarea>
+            <div class="composer-footer"><span><ShieldCheck :size="14" />AI 生成内容仅供参考，实际业务请以文件为准</span><button :disabled="!activeKnowledgeBaseId || !question.trim() || asking || loadingHistory" @click="ask()">发送<ArrowUp :size="16" /></button></div>
           </div>
-          <span class="composer-note">{{ selectedDocument ? `仅检索《${selectedDocument.fileName}》` : sessionDocumentUnavailable ? '当前会话文档不可用，请重新新建会话并选择已解析文档' : '先选择已解析文档，才能开始提问' }}</span>
+          <span class="composer-note">{{ selectedDocument ? `仅检索《${selectedDocument.fileName}》` : sessionDocumentUnavailable ? '当前会话文档不可用，请新建会话' : activeKnowledgeBaseName ? `检索范围：《${activeKnowledgeBaseName}》整个知识库（含全部已解析资料）` : '知识库里还没有已解析的资料' }}</span>
         </div>
       </section>
     </main>
@@ -837,54 +1015,20 @@ async function askAboutFile(file: PolicyFile) {
         <div v-if="!visibleFiles.length" class="empty-state"><Search :size="26" /><strong>{{ !backendEnabled ? '后端尚未连接' : allFiles.length ? '没有找到匹配的文件' : '还没有上传文件' }}</strong><span>{{ !backendEnabled ? '请启动后端并配置数据库后刷新页面' : allFiles.length ? '试试其他名称或清除筛选' : '上传第一份资料后会显示在这里' }}</span><button v-if="allFiles.length" @click="searchText = ''; selectedFilter = '全部文件'">清除筛选</button></div>
       </section>
       <div class="library-bottom"><span>已显示 {{ visibleFiles.length }} 份资料</span><span>{{ backendEnabled ? '资料来自知识库' : '等待后端连接' }}</span></div>
-      <div class="prototype-note"><ShieldCheck :size="15" /><span>{{ backendEnabled ? '文件来自知识库，解析完成后支持问答。' : '当前后端未连接；不会模拟上传结果。' }}</span></div>
     </main>
 
     <KnowledgeGraph v-else-if="activePage === 'knowledge'" key="knowledge" />
     <DocumentReview v-else key="review" />
     </Transition>
 
-    <footer v-if="activePage !== 'home'" class="site-footer"><span>© 2026 农田 AI 助手</span><span class="footer-separator"></span><span>让农业知识服务更简单</span></footer>
   </div>
 
-  <div v-if="showDocumentPicker" class="modal-backdrop" @click.self="showDocumentPicker = false">
-      <div class="document-picker-modal" role="dialog" aria-modal="true" aria-labelledby="document-picker-title">
-        <button class="modal-close" type="button" aria-label="关闭文档选择" @click="showDocumentPicker = false"><X :size="18" /></button>
-        <div class="document-picker-heading">
-          <div class="document-picker-icon"><FolderOpen :size="21" /></div>
-          <div>
-            <h2 id="document-picker-title">选择要提问的文档</h2>
-            <p>仅显示已解析完成的文档；这段会话将只检索所选文档。</p>
-          </div>
-        </div>
-        <div v-if="loadingDocumentPicker" class="document-picker-state">正在加载已解析文档…</div>
-        <div v-else-if="!parsedDocuments.length" class="document-picker-state">
-          <FileText :size="24" />
-          <span>{{ backendEnabled ? '暂无已解析文档，请先上传并解析文件。' : '暂时无法获取文档，请确认后端连接后重试。' }}</span>
-          <button v-if="backendEnabled" type="button" @click="showDocumentPicker = false; navigate('/documents')">查看政策文件<ArrowRight :size="14" /></button>
-        </div>
-        <div v-else class="document-picker-list" aria-label="已解析文档">
-          <button
-            v-for="document in parsedDocuments"
-            :key="document.id"
-            type="button"
-            class="document-picker-item"
-            :aria-pressed="pendingDocumentId === document.id"
-            :class="{ 'is-selected': pendingDocumentId === document.id }"
-            @click="pendingDocumentId = document.id"
-          >
-            <span class="document-picker-file-icon"><FileText :size="18" /></span>
-            <span class="document-picker-name" :title="document.fileName">{{ document.fileName }}</span>
-            <span class="document-picker-check"><Check v-if="pendingDocumentId === document.id" :size="14" /></span>
-          </button>
-        </div>
-        <div class="document-picker-footer">
-          <span v-if="parsedDocuments.length && !loadingDocumentPicker">已解析 {{ parsedDocuments.length }} 份 · 请选择一份</span>
-          <span v-else>选择后再进入会话</span>
-          <button type="button" :disabled="pendingDocumentId === null || loadingDocumentPicker" @click="confirmDocumentSelection">进入对话<ArrowRight :size="15" /></button>
-        </div>
-      </div>
-    </div>
+  <!-- 底部信息条：固定在窗口最下方，列表再长也不会被内容盖住 -->
+  <div v-if="activePage !== 'home'" class="page-dock">
+    <div v-if="activePage === 'documents'" class="prototype-note"><ShieldCheck :size="15" /><span>{{ backendEnabled ? '文件来自知识库，解析完成后支持问答。' : '当前后端未连接；不会模拟上传结果。' }}</span></div>
+    <footer class="site-footer"><span>© 2026 农田 AI 助手</span><span class="footer-separator"></span><span>让农业知识服务更简单</span></footer>
+  </div>
+
     <div v-if="showUpload" class="modal-backdrop" @click.self="showUpload = false">
       <div class="upload-modal">
         <button class="modal-close" aria-label="关闭" @click="showUpload = false"><X :size="18" /></button>
@@ -896,5 +1040,20 @@ async function askAboutFile(file: PolicyFile) {
     </div>
   <!-- 弹窗与提示刻意放在 .app-shell 之外：白色主题对整个 .app-shell 做色调翻转，
        而 filter 会把该祖先变成 position:fixed 的包含块——留在里面弹窗就不再固定于视口、会跟着页面滚 -->
+  <!-- 历史对话的操作菜单：fixed 浮层，不占布局（不会把下面的会话挤下去）、层级高于侧栏；
+       同样放在 .app-shell 之外：白色主题的 filter 会把 .app-shell 变成 fixed 的包含块，
+       留在里面浮层就不再相对视口定位。position 由 toggleSessionMenu() 按按钮位置算出来。 -->
+  <Teleport to="body">
+    <div v-if="menuSession" class="session-menu" :style="menuStyle" @click.stop>
+      <template v-if="deleteTargetId === menuSession.id">
+        <button class="session-menu-item is-danger" type="button" :disabled="asking" @click="confirmDelete(menuSession)">确认删除</button>
+        <button class="session-menu-item" type="button" @click="deleteTargetId = null">取消</button>
+      </template>
+      <template v-else>
+        <button class="session-menu-item" type="button" @click="startRename(menuSession)">重命名</button>
+        <button class="session-menu-item is-danger" type="button" @click="askDelete(menuSession.id)">删除</button>
+      </template>
+    </div>
+  </Teleport>
   <Transition name="toast"><div v-if="toast" class="toast-message"><Check :size="16" />{{ toast }}</div></Transition>
 </template>

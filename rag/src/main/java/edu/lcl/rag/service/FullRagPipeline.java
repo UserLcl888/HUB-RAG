@@ -19,6 +19,7 @@ public class FullRagPipeline {
     private final ConfidenceFilter confidenceFilter;
     private final ParentContextService parentContextService;
     private final SourceBuilder sourceBuilder;
+    private final DirectAnswerService directAnswerService;
     private final ChatClient chatClient;
     private final KnowledgeBaseService kbService;
 
@@ -29,6 +30,16 @@ public class FullRagPipeline {
         long pipelineStart = System.currentTimeMillis();
 
         kbService.requireKnowledgeBases(kbIds);
+
+        // Step 0：与知识库无关的简单问题（寒暄/身份/算术）直接回答，不检索、不给来源
+        if (directAnswerService.shouldAnswerDirectly(question)) {
+            String direct = directAnswerService.answer(question);
+            return RagResponse.builder()
+                    .answer(direct)
+                    .sources(List.of())
+                    .latencyMs((int) (System.currentTimeMillis() - pipelineStart))
+                    .build();
+        }
 
         // Step 1：增强检索（混合检索 + HyDE）
         List<HybridRetrieverService.ScoredChunk> candidates =

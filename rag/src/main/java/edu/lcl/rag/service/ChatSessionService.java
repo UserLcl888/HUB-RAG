@@ -8,6 +8,7 @@ import edu.lcl.rag.repository.ChatMessageRepository;
 import edu.lcl.rag.repository.ChatSessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,8 +25,17 @@ public class ChatSessionService {
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
     private final KbDocumentRepository documentRepository;
+
+    /**
+     * 旧会话 docId 为空时，是否自动补一份"最新上传的已解析文档"。
+     * false（默认）：docId 为空就是"整个知识库"，不再把范围偷偷缩成一份文档。
+     */
+    @Value("${rag.chat.auto-bind-document:false}")
+    private boolean autoBindDocument;
     /** 最多保留的历史轮数（超出后截断旧消息） */
     private static final int MAX_HISTORY_ROUNDS = 5;
+    /** 会话标题长度上限，与 kb_chat_session.title 的 VARCHAR(200) 对齐 */
+    private static final int MAX_TITLE_LENGTH = 200;
 
     /**
      * 获取已有会话，或创建新会话。
@@ -67,7 +77,8 @@ public class ChatSessionService {
     }
 
     /**
-     * 获取会话固定的知识库及文档范围；旧会话会自动补齐默认文档。
+     * 获取会话固定的知识库及文档范围。
+     * docId 为空 = 检索整个知识库；只有显式开启 rag.chat.auto-bind-document 才会自动补一份文档。
      *
      * @param sessionId 会话 ID
      * @param requestKbIds 请求携带的知识库 ID，仅用于兼容旧调用方
@@ -82,7 +93,7 @@ public class ChatSessionService {
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在：" + sessionId));
         List<Long> kbIds = parseKnowledgeBaseIds(session.getKbIds());
         Long docId = session.getDocId();
-        if (docId == null) {
+        if (docId == null && autoBindDocument) {
             docId = findFallbackDocument(session.getKbIds());
         }
         return new RetrievalScope(kbIds, docId);
@@ -107,6 +118,56 @@ public class ChatSessionService {
                         sessionRepository.save(session);
                     }
                 });
+    }
+
+    /**
+     * 重命名会话：只改标题，不动检索范围、文档绑定与消息。
+     * 标题为空视为无效；超过列宽（{@code kb_chat_session.title} VARCHAR(200)）按列宽截断，避免写库报错。
+     *
+     * @param sessionId 会话 ID
+     * @param title     新标题
+     * @return 更新后的会话
+     */
+    @Transactional
+    public ChatSession renameSession(String sessionId, String title) {
+        ChatSession session = requireActiveSession(sessionId);
+        String normalized = title == null ? "" : title.trim();
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException("会话标题不能为空");
+        }
+        if (normalized.length() > MAX_TITLE_LENGTH) {
+            normalized = normalized.substring(0, MAX_TITLE_LENGTH);
+        }
+        session.setTitle(normalized);
+        ChatSession saved = sessionRepository.save(session);
+        log.info("[ChatSession] 会话重命名：sessionId={}，title={}", sessionId, normalized);
+        return saved;
+    }
+
+    /**
+     * 删除会话：软删除（is_deleted = true）。
+     * <p>
+     * 消息表没有软删字段，这里**不物理删除消息**——会话已从列表和消息接口里消失，
+     * 误删时数据仍在库里可恢复；如果确认要一并清理消息，再单独加一条 delete by sessionId。
+     *
+     * @param sessionId 会话 ID
+     */
+    @Transactional
+    public void deleteSession(String sessionId) {
+        ChatSession session = requireActiveSession(sessionId);
+        session.setIsDeleted(true);
+        sessionRepository.save(session);
+        log.info("[ChatSession] 会话已删除（软删）：sessionId={}", sessionId);
+    }
+
+    /** 取未删除的会话，不存在（或已删除）一律按"会话不存在"处理。 */
+    private ChatSession requireActiveSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("会话 ID 不能为空");
+        }
+        return sessionRepository.findById(sessionId)
+                .filter(item -> !Boolean.TRUE.equals(item.getIsDeleted()))
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在：" + sessionId));
     }
 
     private Long findFallbackDocument(String storedKbIds) {

@@ -126,3 +126,17 @@ export function listChatSessions() {
 export function getChatMessages(sessionId: string) {
   return request<ChatMessage[]>(`/chat/sessions/${encodeURIComponent(sessionId)}/messages`);
 }
+
+/** 重命名会话：只改标题（后端 PATCH /chat/sessions/{id}）。 */
+export function renameChatSession(sessionId: string, title: string) {
+  return request<ChatSession>(`/chat/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  });
+}
+
+/** 删除会话：后端软删除，会话不再出现在列表里（DELETE /chat/sessions/{id}）。 */
+export function deleteChatSession(sessionId: string) {
+  return request<null>(`/chat/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+}

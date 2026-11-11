@@ -12,11 +12,14 @@ import edu.lcl.rag.repository.ChatSessionRepository;
 import edu.lcl.rag.service.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
@@ -33,6 +36,21 @@ public class ChatController {
     private final KnowledgeBaseService kbService;
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
+    private final AnswerCacheService answerCache;
+
+    /** 首页热门问题的默认预热清单（与前端 hotQuestions 保持一致） */
+    private static final List<String> DEFAULT_WARM_QUESTIONS = List.of(
+            "建设规划布局要做到什么程度?",
+            "施工组织设计怎么做?",
+            "什么是田块整治工程？",
+            "如何进行项目工程设计?");
+
+    /**
+     * 会话是否必须绑定单个文档。
+     * false（默认）：docId 为空表示"检索整个知识库"，答案来源可以是库里的多份文档。
+     */
+    @Value("${rag.chat.require-document-scope:false}")
+    private boolean requireDocumentScopeEnabled;
 
     // 专用线程池处理 SSE 推送（避免占用 Tomcat 线程池）
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool(
@@ -62,7 +80,9 @@ public class ChatController {
         // 创建或获取会话
         String sid = sessionService.getOrCreateSession(sessionId, kbIds, docId);
         ChatSessionService.RetrievalScope scope = sessionService.resolveRetrievalScope(sid, kbIds, docId);
-        requireDocumentScope(scope);
+        if (requireDocumentScopeEnabled) {
+            requireDocumentScope(scope);
+        }
         validateScope(scope.kbIds(), scope.docId());
 
         SseEmitter emitter = new SseEmitter(60_000L);  // 60秒超时
@@ -115,10 +135,77 @@ public class ChatController {
                 request.getSessionId(), request.getKbIds(), request.getDocId());
         ChatSessionService.RetrievalScope scope = sessionService.resolveRetrievalScope(
                 sid, request.getKbIds(), request.getDocId());
-        requireDocumentScope(scope);
+        if (requireDocumentScopeEnabled) {
+            requireDocumentScope(scope);
+        }
         validateScope(scope.kbIds(), scope.docId());
         return streamingRagService.syncQuery(request.getQuestion(), scope.kbIds(), scope.docId(), sid);
     }
+
+    /**
+     * 预热答案缓存：把预设热门问题各生成一次并写入 Redis（默认 7 天）。
+     * <p>
+     * 用法：<code>POST /api/v1/chat/cache/warm?kbId=1</code>，
+     * 也可以在 body 里给 {"questions":["...","..."]} 指定问题。
+     * 预热**不写会话记录**（persist=false），避免历史对话里多出一堆空会话。
+     */
+    @PostMapping("/cache/warm")
+    public ApiResponse<List<WarmResult>> warmCache(@RequestParam(required = false) Long kbId,
+                                                   @RequestBody(required = false) WarmRequest request) {
+        List<Long> kbIds = resolveWarmKbIds(kbId);
+        if (kbIds.isEmpty()) {
+            throw new IllegalArgumentException("还没有知识库，无法预热");
+        }
+        List<String> questions = (request != null && request.questions() != null && !request.questions().isEmpty())
+                ? request.questions() : DEFAULT_WARM_QUESTIONS;
+
+        List<WarmResult> results = new ArrayList<>();
+        for (String question : questions) {
+            long started = System.currentTimeMillis();
+            try {
+                RagResponse response = streamingRagService.syncQuery(question, kbIds, null, null, false);
+                String answer = response.getAnswer();
+                if (answer == null || answer.isBlank() || response.isNotFound()) {
+                    results.add(new WarmResult(question, false, 0, 0, "检索为空，未缓存"));
+                    continue;
+                }
+                List<RagResponse.Source> sources =
+                        response.getSources() == null ? List.of() : response.getSources();
+                answerCache.put(answerCache.buildKey(kbIds, null, question),
+                        new AnswerCacheService.CachedAnswer(question, answer, sources,
+                                LocalDateTime.now().toString()));
+                results.add(new WarmResult(question, true, answer.length(), sources.size(),
+                        (System.currentTimeMillis() - started) + "ms"));
+            } catch (Exception e) {
+                log.warn("[Chat] 预热失败：question={}，error={}", question, e.getMessage());
+                results.add(new WarmResult(question, false, 0, 0, "失败：" + e.getMessage()));
+            }
+        }
+        return ApiResponse.ok(results);
+    }
+
+    /** 手动清空答案缓存（正常情况下文档变化会自动失效，这里只留一个兜底入口）。 */
+    @PostMapping("/cache/clear")
+    public ApiResponse<String> clearCache() {
+        long removed = answerCache.clearAllKeys();
+        answerCache.invalidate();
+        return ApiResponse.ok("已删除 " + removed + " 条答案缓存，并使缓存代 +1");
+    }
+
+    private List<Long> resolveWarmKbIds(Long kbId) {
+        if (kbId != null) {
+            kbService.requireKnowledgeBase(kbId);
+            return List.of(kbId);
+        }
+        return kbService.listAll().stream().map(vo -> vo.getId()).findFirst()
+                .map(List::of).orElse(List.of());
+    }
+
+    /** 预热请求体：不传则用默认的 4 个热门问题 */
+    public record WarmRequest(List<String> questions) {}
+
+    /** 单个问题的预热结果 */
+    public record WarmResult(String question, boolean cached, int answerChars, int sourceCount, String detail) {}
 
     /** 获取所有未删除的会话（按最近活跃时间倒序）。 */
     @GetMapping("/sessions")
@@ -140,6 +227,30 @@ public class ChatController {
         return ApiResponse.ok(
                 messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
     }
+
+    /**
+     * 重命名会话（左侧历史对话行的"重命名"）：只改 title，检索范围与消息都不动。
+     * 前端用法：{@code PATCH /api/v1/chat/sessions/{sessionId}}，body {@code {"title":"新标题"}}。
+     */
+    @PatchMapping("/sessions/{sessionId}")
+    public ApiResponse<ChatSessionVO> renameSession(@PathVariable String sessionId,
+                                                    @RequestBody(required = false) RenameRequest request) {
+        ChatSession session = sessionService.renameSession(sessionId, request == null ? null : request.title());
+        return ApiResponse.ok(toSessionVO(session));
+    }
+
+    /**
+     * 删除会话（左侧历史对话行的"删除"）：软删除，会话从列表与消息接口消失，消息数据保留以便恢复。
+     * 前端用法：{@code DELETE /api/v1/chat/sessions/{sessionId}}。
+     */
+    @DeleteMapping("/sessions/{sessionId}")
+    public ApiResponse<Void> deleteSession(@PathVariable String sessionId) {
+        sessionService.deleteSession(sessionId);
+        return ApiResponse.ok(null);
+    }
+
+    /** 重命名请求体 */
+    public record RenameRequest(String title) {}
 
     private void validateScope(List<Long> kbIds, Long docId) {
         kbService.requireKnowledgeBases(kbIds);

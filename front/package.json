@@ -8,7 +8,7 @@
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "theme:light": "node scripts/build-light-theme.mjs",
-    "theme:check": "node scripts/check-theme-tokens.mjs"
+    "theme:check": "node scripts/check-theme-tokens.mjs && node scripts/check-theme-contrast.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.1",

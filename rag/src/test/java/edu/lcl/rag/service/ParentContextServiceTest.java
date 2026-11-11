@@ -151,6 +151,21 @@ class ParentContextServiceTest {
                 .containsExactly(2L);
     }
 
+    /**
+     * 问题里写了库里不存在的编号时，退回全部候选——
+     * 定界结果为空会导致上下文为空，模型只会回"在知识库中未找到"，等于把答案丢了。
+     */
+    @Test
+    void fallsBackToAllParentsWhenSectionNumberMatchesNothing() {
+        var first = createHit(1L, "3 术语和定义", "高标准农田定义。", "高标准农田定义。");
+        var second = createHit(2L, "6 初步设计报告规定 / 6.7 施工组织设计",
+                "6.7施工组织设计。", "6.7施工组织设计。");
+
+        var selected = service.selectForContext("9.9.9 写了什么？", List.of(first, second));
+
+        assertThat(selected).extracting(hit -> hit.parent().getId()).containsExactly(1L, 2L);
+    }
+
     /** 构造父块实体（同一文档 docId=2 / docVersion=1，按 parentIndex 排序）。 */
     private DocParentChunk parent(Long id, int parentIndex, String sectionTitle, String content) {
         DocParentChunk parent = new DocParentChunk();

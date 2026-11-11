@@ -3,6 +3,7 @@ package edu.lcl.rag.service;
 import edu.lcl.rag.entity.DocParentChunk;
 import edu.lcl.rag.repository.DocParentChunkRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -24,6 +25,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ParentContextService {
     private static final Pattern SECTION_REFERENCE = Pattern.compile(
             "(?<![\\d.])(\\d{1,2}(?:\\.\\d{1,3}){1,4})(?![\\d.])");
@@ -266,15 +268,23 @@ public class ParentContextService {
                     ? number : number.substring(0, number.indexOf('.', number.indexOf('.') + 1)));
         }
         if (!requestedSections.isEmpty()) {
-            return parents.stream()
+            List<ParentHit> scoped = parents.stream()
                     .filter(hit -> requestedSections.contains(sectionNumber(hit.parent().getSectionTitle())))
                     .toList();
+            if (!scoped.isEmpty()) {
+                return scoped;
+            }
+            // 问题里写了编号，但没有任何父块的小节标题挂在这个编号下（父块是按小节切的）。
+            // 这时宁可退回全部候选，也不能把上下文清空——清空等于直接回答"在知识库中未找到"。
+            log.debug("[ParentContext] 编号定界无匹配父块，退回全部候选 {} 条：{}", parents.size(), question);
+            return parents;
         }
         List<ParentHit> matchingTitles = parents.stream()
                 .filter(hit -> questionContainsTitle(question, hit.parent().getSectionTitle()))
                 .toList();
         return matchingTitles.isEmpty() ? parents : matchingTitles;
     }
+
 
     private String sectionNumber(String path) {
         if (path == null) {

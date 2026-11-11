@@ -1,0 +1,1223 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="light" />
+<!-- 排查用：view-source 搜本行即可确认线上加载的是哪一版（改页面时记得同步 +1） -->
+<meta name="emb-page-version" content="13" />
+<meta name="robots" content="noindex" />
+<title>农田 AI 助手 · 智能问答</title>
+<!-- 内联 SVG 图标：不引入图片资源，也避免顶层打开时 favicon 404 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='9'%20fill='%232fbf8e'/%3E%3Ctext%20x='16'%20y='23'%20font-size='18'%20text-anchor='middle'%20fill='%23ffffff'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E" />
+<!--
+  v13 改动：参考来源卡片去掉原生 title 悬浮提示（那个黑色框太长、会压住正文）。
+            卡片仍显示「文档图标 + 文件名 + 第 N 页」，其余一切不变
+
+  v12 改动：输入条左侧加一枚品牌标记（薄荷底 + 绿星，与回答头像同一枚），纯装饰：
+            pointer-events:none、无 hover 态、aria-hidden —— 看着是"AI 提问框"，不会被误当成按钮
+
+  v11 改动：撤掉输入条左侧的麦克风标识（不做语音，多余标识不好看），输入左内边距回到 14px
+  v10：曾加过该麦克风标识，已在 v11 撤销
+
+  v9 改动：热门问题改成两列等宽网格（恒定「上 2 下 2」+ 左对齐），
+          窗口缩小时不再因为问题长短不一而参差换行；<240px 才退成一列
+
+  v8 改动：输入框示例问题改为「如何进行工程管理？」（原为「管护资金如何使用？」）
+
+  v7 改动（按两轮独立审计修剩余问题）：
+    · 去掉 SUBITEM_BOUNDARY_RE 的 lookbehind：旧引擎（Safari/WKWebView < 16.4）里正则字面量的
+      lookbehind 是解析期错误，会让整段脚本不执行（热门问题不渲染、发送键永远灰着）。改成捕获组拼回，行为一致
+    · 死会话自愈收窄：只在"传输层失败"（HTTP 400/断连）且零 token 时重试；
+      服务端主动推的 error 事件（有 message）不再被吞掉，原样显示给用户
+    · 断流时若已收到正文：保留正文并在末尾补「（回答中断：…）」，不再是无声的截断
+    · 新增客户端兜底超时（75s）与 rAF 停摆兜底：宿主隐藏/摘掉 iframe 时不再可能永久停在"流式"
+    · 流式期间隐藏末尾半截引用标记（"[参考1" / "（来源：[参考"），不再闪一下
+    · 引用清理额外支持「参考来源：[参考1]」写法，不再留下孤零零的"参考"
+    · 自动滚动改为"跟随"：用户往上翻看时不再被每帧拽回底部（新提问仍强制到底）
+    · 禁用态发送按钮改用主站白色主题配色（#d1e5e0 底 / #748e87 字），文字不再看不见
+    · 滚动条槽位两侧预留（scrollbar-gutter: stable both-edges），消息区与输入条中线始终对齐
+    · 点热门问题不再清空用户已经输入的内容；来源卡片图标补 aria-hidden
+
+  v6 改动（bug 修复）：
+    · 死会话自愈：带着旧的 sessionId 请求且一个字都没收到时，清掉该 ID 并自动用新会话重来一次
+      （后端 getOrCreateSession 对未知会话直接抛「会话不存在」→ 400，否则页面会被永久卡死）
+    · /api/v1/kb 返回脏数据时不再拼出 kbIds=NaN（跳过非数字 id，取不到就沿用默认库）
+    · body 不再出现第二条滚动条；消息区 overscroll-behavior:contain，滚到底不会把滚动传给宿主页面
+    · 输入条与消息区左右内边距对齐（都是 13px），消除 1px 错位
+
+  v5 改动（样式优化，对齐最早的悬浮窗稿）：
+    · 热门问题改成浅蓝药丸（#e9f1fe / #3c5a86，宽度随内容、自动换行，不再是等宽两列灰底块）
+    · 输入区整条圆角输入条：输入框无边框内嵌，发送按钮在条内右侧（#43d19a），聚焦时描边变绿
+    · 宽窗口（顶层直接打开）时内容居中成一栏（max-width 760px），窄悬浮窗里仍铺满
+
+  v4 改动：加载态只保留「正在检索知识库…」文字，去掉状态行里跟着转的三点
+          （三点动画只留在作者名「农田 AI 助手」旁边，与主站同一处）
+
+  v3 改动（对齐主站图2）：
+    · 作者名「农田 AI 助手」、薄荷底绿星头像、用户侧「我」头像 + 右对齐浅灰气泡、消息分隔线
+    · 来源卡片对齐 SourceCards：文档图标 + 文件名 + 第 N 页（章节/摘要只进 title 悬浮提示）
+    · 正文剔除引用标记 [参考N] / （来源：[参考N]）（与主站 cleanCitationMarkers 一致）
+    · 正文排版取值对齐主站白色主题（行高 1.9、段落 10px、标题 15px、条款缩进 1.5em/3em）
+
+  独立问答页（悬浮窗内嵌内容），由 RAG 后端直接提供：
+      http://<后端地址>:8080/emb
+      或走前端开发服务器代理：http://<前端地址>:5173/emb
+
+  设计约定
+  · 只包含：热门问题 / 问题输入框 / 发送按钮 / 回答区域（覆盖热门问题）/ 参考来源 / 加载中。
+    历史会话列表、文件管理、iframe 嵌入代码都不在页面内；悬浮窗外观与开关由外层负责。
+  · 页面自包含（无构建、无外部依赖、无图片资源），接口与主站完全一致：
+      GET /api/v1/kb                       取检索范围（与首页同一个默认知识库）
+      GET /api/v1/chat/stream?question=&kbIds=&sessionId=   SSE 流式问答
+  · 热门问题与首页一致，答案已被预热进 Redis 答案缓存（同一 kbIds + docId 为空才命中），
+    点一下基本秒回。会话 ID 在同一次页面访问内复用，多轮追问共享上下文。
+  · 回答渲染方式与主站一致：移植 front/src/utils/markdown.ts + MessageBody.vue 的解析/渲染，
+    流式期间按帧揭示字符（打字机），全部文本走 textContent，不使用 innerHTML。
+  · 来源只展示文本信息（文件名 / 页码 / 章节，摘要放 title 悬浮提示），不处理图片、图标、OCR 图形。
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --emb-bg: #fff;
+    --emb-text: #1f2937;
+    --emb-muted: #8a97a6;
+    --emb-line: #eef1f5;
+    /* 三点动画 / 流式光标 */
+    --emb-accent: #2fbf8e;
+    /* 热门问题药丸（对齐悬浮窗稿） */
+    --emb-chip-bg: #e9f1fe;
+    --emb-chip-bg-hover: #dde9fd;
+    --emb-chip-text: #3c5a86;
+    --emb-chip-text-hover: #2b4a78;
+    /* 发送按钮（禁用态取主站白色主题 .composer-footer button:disabled 的配色，保证文字看得清） */
+    --emb-send-bg: #43d19a;
+    --emb-send-bg-hover: #37c08b;
+    --emb-send-bg-disabled: #d1e5e0;
+    --emb-send-text-disabled: #748e87;
+  }
+  * { box-sizing: border-box; }
+  /* hidden 属性优先：.dots 是 inline-flex（作者名旁的三点），没有 !important 就顶不掉它的 display */
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--emb-bg);
+    color: var(--emb-text);
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    overflow: hidden;               /* 只有消息区滚动，页面本身不出现第二条滚动条 */
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  button, textarea { font-family: inherit; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  /* ── 骨架 ───────────────────────────────────────────────── */
+  .emb { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--emb-bg); }
+  .emb-body {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+    padding: 13px 13px 4px;
+    overscroll-behavior: contain;   /* 滚到底后不要把滚动传给宿主页面（悬浮窗里很关键） */
+    /* 滚动条槽位两侧都留：消息区与输入条的中线始终一致，不会因出现滚动条而左右错开几像素 */
+    scrollbar-gutter: stable both-edges;
+    scrollbar-width: thin;          /* Firefox：与下面 6px 的 WebKit 样式观感一致 */
+    scrollbar-color: #dde5ec transparent;
+  }
+  /* 宽窗口（顶层直接打开）时内容居中成一栏，窄悬浮窗里自然铺满 */
+  .emb-body > .hot, .emb-body > .thread { max-width: 760px; margin: 0 auto; }
+  .emb-body::-webkit-scrollbar { width: 6px; }
+  .emb-body::-webkit-scrollbar-thumb { background: #dde5ec; border-radius: 3px; }
+  .emb-body::-webkit-scrollbar-track { background: transparent; }
+
+  /* ── 热门问题 ───────────────────────────────────────────── */
+  .hot-title { color: var(--emb-muted); font-size: 11px; letter-spacing: .06em; margin-bottom: 9px; }
+  /* 两列等宽网格：恒定「上 2 下 2」且左侧对齐，
+     不会因为窗口变窄、问题长短不一而出现 2/1/1 这种参差换行 */
+  .hot-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  /* 极窄窗口（<240px）才退成一列，否则每个药丸只剩几个字 */
+  @media (max-width: 240px) { .hot-list { grid-template-columns: 1fr; } }
+  .hot-item {
+    display: block; width: 100%; max-width: 100%; padding: 7px 14px; margin: 0;
+    border: 1px solid transparent; border-radius: 999px;
+    background: var(--emb-chip-bg); color: var(--emb-chip-text);
+    font-size: 12px; line-height: 1.45; text-align: left; cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    transition: background .16s, color .16s;
+  }
+  .hot-item:hover:not(:disabled) { background: var(--emb-chip-bg-hover); color: var(--emb-chip-text-hover); }
+  .hot-item:disabled { opacity: .55; cursor: not-allowed; }
+
+  /* ── 问答区（结构/取值对齐主站 .conversation-message，小窗口下略收紧） ── */
+  .thread { padding-bottom: 4px; }
+  .msg { display: flex; gap: 10px; padding: 12px 0; border-bottom: 1px solid #e6ecf1; }
+  .msg.user { justify-content: flex-end; }
+  .msg.user .avatar { order: 2; }
+  .msg-content { min-width: 0; max-width: calc(100% - 38px); }
+  .msg.user .msg-content { padding-top: 3px; text-align: right; }
+  .msg.user .msg-text {
+    display: inline-block; margin: 0; padding: 6px 10px; border-radius: 10px;
+    background: #f1f3f6; color: #24282a; font-size: 12px; line-height: 1.7;
+    text-align: left; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .avatar {
+    flex: none; width: 28px; height: 28px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; line-height: 1;
+  }
+  .avatar-ai { background: #bae3d6; color: #27bf87; }
+  .avatar-user { background: #c8d3dd; color: #2f3538; font-size: 10px; }
+  .msg-head { display: flex; align-items: center; gap: 4px; margin-bottom: 5px; }
+  .msg-author { color: #5d6f6b; font-size: 10px; }
+  .dots { display: inline-flex; align-items: center; gap: 3px; }
+  .dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--emb-accent); animation: emb-dot 1.15s ease-in-out infinite; }
+  .dots i:nth-child(2) { animation-delay: .17s; }
+  .dots i:nth-child(3) { animation-delay: .34s; }
+  @keyframes emb-dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
+  .status { padding: 2px 0 4px; color: var(--emb-muted); font-size: 12px; }
+  .stream-caret { display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -2px; background: var(--emb-accent); animation: emb-caret 1s steps(1, end) infinite; }
+  @keyframes emb-caret { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .dots i, .stream-caret { animation: none; }
+    .stream-caret { opacity: 1; }
+  }
+
+  /* ── 回答正文：取值对齐主站白色主题（style-light.css 的 .md-* 段） ── */
+  .md-body { color: #212527; font-size: 12.5px; line-height: 1.9; overflow-wrap: break-word; }
+  .md-body > :first-child { margin-top: 0; }
+  .md-heading { margin: 16px 0 9px; color: #0a0c0b; font-size: 15px; font-weight: 700; line-height: 1.55; letter-spacing: -.01em; }
+  .md-paragraph { margin: 10px 0 0; }
+  .md-list { margin: 10px 0 0; padding-left: 2em; }
+  .md-list > li { margin: 10px 0; padding-left: 2px; }
+  .md-list li::marker { color: #35b184; font-weight: 700; }
+  .md-list .md-list { margin: 6px 0 0; padding-left: 1.6em; }
+  .md-list .md-list > li { margin: 5px 0; }
+  .md-body ul.md-list { list-style: disc; }
+  .md-body ul.md-list ul.md-list { list-style: circle; }
+  .md-body ul.md-list ul.md-list ul.md-list { list-style: square; }
+  .md-body ol.md-list ol.md-list { list-style: lower-alpha; }
+  .md-quote { margin: 10px 0 0; padding: 3px 0 3px 11px; border-left: 2px solid #b0d9cc; color: #5d7d88; }
+  .md-clause-list { list-style: none; padding-left: 0; }
+  .md-clause-list > li { display: flex; gap: 8px; align-items: baseline; margin: 9px 0; }
+  .md-clause-num { flex: none; min-width: 1.8em; color: #35b184; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .md-clause-list > li.is-sub { margin: 6px 0 6px 1.5em; }
+  .md-clause-list > li.is-sub-deep { margin-left: 3em; }
+  .md-clause-num.is-dot::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #5ecfa6; vertical-align: middle; }
+  .md-clause-num.is-dot-deep::before { width: 5px; height: 5px; background: transparent; border: 1.5px solid #5ecfa6; }
+  .md-clause-text { min-width: 0; flex: 1; }
+  /* 分项文字主站白色主题没做覆盖（沿用深色值 #bfd0d5，白底上几乎看不清），这里改用可读的中灰 */
+  .md-clause-sub { margin: 4px 0 0 1.4em; color: #4d6169; }
+  .md-clause-sub + .md-clause-sub { margin-top: 3px; }
+  .md-clause-sub::before { content: '—'; margin-right: 5px; color: #5ecfa6; opacity: .7; }
+  .md-clause-list > li.is-solo { margin: 12px 0 7px; }
+  .md-clause-list > li.is-solo .md-clause-num,
+  .md-clause-list > li.is-solo-title .md-clause-num { display: none; }
+  .md-clause-list > li.is-solo-title .md-clause-text { font-weight: 600; color: #16211f; }
+  .md-bold { font-weight: 700; }
+  .md-italic { font-style: italic; }
+  .md-code { padding: 1px 4px; border-radius: 4px; background: #eef2f4; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+
+  /* ── 参考来源：对齐主站 SourceCards（文档图标 + 文件名 + 页码，章节/摘要进悬浮提示） ── */
+  .sources { margin-top: 14px; padding-top: 11px; border-top: 1px dashed #cdd8e0; }
+  .sources-title { color: #4d9979; font-size: 10px; letter-spacing: .08em; margin-bottom: 8px; }
+  .source {
+    display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 11px; margin-bottom: 6px;
+    border: 1px solid #c9e0d9; border-radius: 8px; background: #fbfdfc;
+    color: #26332e; font-size: 11px; font-weight: 600; line-height: 1.4;
+  }
+  .source:last-child { margin-bottom: 0; }
+  .source svg { flex: none; color: #35b184; }
+  .source-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .source-page { flex: none; color: #539379; font-weight: 500; font-size: 10px; }
+
+  /* ── 输入区（对齐悬浮窗稿：整条圆角输入条，发送按钮在条内右侧） ── */
+  .composer-bar { flex: none; padding: 10px 13px 12px; border-top: 1px solid var(--emb-line); background: var(--emb-bg); }
+  .composer {
+    display: flex; align-items: flex-end; gap: 8px;
+    width: 100%; max-width: 760px; margin: 0 auto;
+    padding: 4px 4px 4px 8px;
+    border: 1px solid #e2e8ee; border-radius: 18px; background: #fff;
+    box-shadow: 0 2px 10px rgba(15, 34, 51, .04);
+    transition: border-color .16s, box-shadow .16s;
+  }
+  .composer:focus-within { border-color: #8ed7bb; box-shadow: 0 2px 10px rgba(18, 169, 124, .12); }
+  /* 左侧品牌标记：与第一行文字垂直居中对齐（输入框变高时也跟着第一行）；
+     纯装饰 —— 不可点、无 hover，避免看起来像坏掉的按钮 */
+  .composer-mark {
+    flex: none; align-self: flex-start; margin-top: 4px;
+    width: 20px; height: 20px; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    background: #e4f5ef; color: #27bf87; font-size: 10px; line-height: 1;
+    pointer-events: none; user-select: none;
+  }
+  .composer textarea {
+    flex: 1 1 auto; min-width: 0; height: 30px; max-height: 96px;
+    padding: 5px 0; border: 0; border-radius: 0;
+    background: transparent; color: var(--emb-text); font-size: 12px; line-height: 1.5;
+    resize: none; outline: 0; overflow-y: auto;
+  }
+  .composer textarea::placeholder { color: #9aa7b4; }
+  .composer textarea:disabled { color: #9aa7b4; }
+  .composer button {
+    flex: none; height: 30px; padding: 0 16px; border: 0; border-radius: 14px;
+    background: var(--emb-send-bg); color: #fff; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: background .16s;
+  }
+  .composer button:hover:not(:disabled) { background: var(--emb-send-bg-hover); }
+  .composer button:disabled { background: var(--emb-send-bg-disabled); color: var(--emb-send-text-disabled); cursor: not-allowed; }
+</style>
+</head>
+<body>
+  <div class="emb" id="emb">
+    <div class="emb-body" id="embBody">
+      <!-- 热门问题：回答区出现后即被覆盖 -->
+      <section class="hot" id="embHot" aria-label="热门问题">
+        <div class="hot-title">热门问题</div>
+        <div class="hot-list" id="embHotList"></div>
+      </section>
+      <!-- 回答区域（含用户问题、流式回答、参考来源） -->
+      <div class="thread" id="embThread" hidden></div>
+    </div>
+
+    <div class="composer-bar">
+      <form class="composer" id="embComposer" autocomplete="off">
+        <label class="sr-only" for="embInput">向农田 AI 助手提问</label>
+        <!-- 输入条左侧的品牌标记：与回答头像同一枚「薄荷底 + 绿星」，纯装饰
+             （pointer-events:none + 无 hover 态，所以不会被误当成可点的按钮） -->
+        <span class="composer-mark" aria-hidden="true">✦</span>
+        <textarea id="embInput" rows="1" placeholder="请输入问题，如：如何进行工程管理？"></textarea>
+        <button id="embSend" type="submit" disabled>发送</button>
+      </form>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ══════════════════════════════════════════════════════════
+   * 一、配置
+   * ══════════════════════════════════════════════════════════ */
+
+  var API = '/api/v1';
+
+  /**
+   * 与首页一致的默认知识库 id。
+   * 热门问题的答案缓存 key 里带 kbIds，只有检索范围相同才会命中，
+   * 所以这里必须和首页（DEFAULT_KNOWLEDGE_BASE_ID = 2）用同一个库。
+   */
+  var DEFAULT_KB_ID = 2;
+
+  /** 热门问题：与首页 / 后端预热清单完全一致（多一个空格都会另算一条缓存） */
+  var HOT_QUESTIONS = [
+    '建设规划布局要做到什么程度?',
+    '施工组织设计怎么做?',
+    '什么是田块整治工程？',
+    '如何进行项目工程设计?'
+  ];
+
+  var LOADING_TEXT = '正在检索知识库…';
+  var FALLBACK_ERROR = '问答服务暂时不可用，请稍后重试。';
+  var EMPTY_ANSWER = '没有获取到回答内容，请换个问法再试一次。';
+  /** 客户端兜底超时：后端 SseEmitter 是 60s，这里给 75s（覆盖"连 SSE 响应头都没回来的卡死"） */
+  var ASK_TIMEOUT_MS = 75000;
+  var ANSWER_TIMEOUT = '回答超时了，请重新提问。';
+
+  /* ══════════════════════════════════════════════════════════
+   * 二、回答渲染：front/src/utils/markdown.ts 的等价移植
+   *    （正则、判定顺序、编号规则都保持一致，保证与主站同样式）
+   * ══════════════════════════════════════════════════════════ */
+
+  var INLINE_RE = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*)/g;
+  var HEADING_RE = /^(#{1,4})\s+(.*)$/;
+  var QUOTE_RE = /^\s*>\s?(.*)$/;
+  var ITEM_RE = /^([ \u3000]*)(\d{1,2}[.、)]|[-*+•])(?:\s+|(?=[\u4e00-\u9fff]))(.*)$/;
+  var CLAUSE_RE = /^(?:\*\*)?\d{1,2}(?:\.\d{1,3}){1,4}(?:\*\*)?(?=[\s、.．:：]|[\u4e00-\u9fa5]|$)/;
+  var CLAUSE_HEAD_RE = /^(?:\*\*)?(\d{1,2}(?:\.\d{1,3}){1,4})(?:\*\*)?[\s、.．:：]*/;
+  var SUBITEM_RE = /^—{2,}\s*/;
+  /* 注意：这里刻意不用 lookbehind（主站 markdown.ts 用的是 (?<=[。；！？：])）。
+     lookbehind 是 ES2018；在不支持的引擎（Safari/WKWebView < 16.4 等）里，正则**字面量**是解析期错误，
+     会让整段脚本不执行——页面直接变成"没有热门问题、发送键永远灰着"的死页面。
+     改成把句末标点写成捕获组：split 会把捕获内容留在结果数组里，下面两两拼回上一段即可，行为与主站一致。 */
+  var SUBITEM_BOUNDARY_RE = /([。；！？：])\s*(?=—{2,})/;
+  var ITEM_MARKER = /^[ \u3000]*(\d{1,2}[.、)]|[-*+•])(?:\s+|(?=[\u4e00-\u9fff]))/;
+
+  /** 把塞在同一行的多个 "——" 分项拆成多行（分隔符是捕获组，需两两拼回上一段） */
+  function splitSubitemRuns(line) {
+    if (line.indexOf('——') < 0) return [line];
+    var pieces = line.split(SUBITEM_BOUNDARY_RE);
+    var parts = [];
+    for (var i = 0; i < pieces.length; i += 2) {
+      var chunk = (pieces[i] + (pieces[i + 1] || '')).trim();
+      if (chunk) parts.push(chunk);
+    }
+    return parts.length > 1 ? parts : [line];
+  }
+
+  /** 行内解析：只切出 **加粗**、*斜体*、`代码`，不生成 HTML */
+  function parseInline(text) {
+    var out = [];
+    var cursor = 0;
+    var re = new RegExp(INLINE_RE.source, 'g');
+    var match;
+    while ((match = re.exec(text)) !== null) {
+      var start = match.index;
+      if (start > cursor) out.push({ text: text.slice(cursor, start) });
+      var token = match[0];
+      if (token.indexOf('**') === 0) out.push({ text: token.slice(2, -2), bold: true });
+      else if (token.charAt(0) === '`') out.push({ text: token.slice(1, -1), code: true });
+      else out.push({ text: token.slice(1, -1), italic: true });
+      cursor = start + token.length;
+      if (token === '') re.lastIndex += 1;
+    }
+    if (cursor < text.length) out.push({ text: text.slice(cursor) });
+    return out.length ? out : [{ text: text }];
+  }
+
+  /** 条款编号：整条回答最浅层为顶层，顶层并列时编号 1./2.，顶层唯一则不编号 */
+  function labelClauses(drafts) {
+    if (!drafts.length) return [];
+    var minDepth = Math.min.apply(null, drafts.map(function (draft) { return draft.depth; }));
+    var solo = drafts.filter(function (draft) { return draft.depth === minDepth; }).length === 1;
+    var hasChild = drafts.some(function (draft) { return draft.depth > minDepth; });
+    var topCount = 0;
+    return drafts.map(function (draft) {
+      var level = Math.max(0, draft.depth - minDepth);
+      var isTop = level === 0;
+      return {
+        label: (isTop && !solo) ? (++topCount) + '.' : '',
+        level: level,
+        solo: isTop && solo,
+        soloTitle: isTop && solo && hasChild,
+        inline: draft.inline,
+        subitems: draft.subitems || []
+      };
+    });
+  }
+
+  /** 极简 Markdown → 节点树（标题 / 列表 / 条款 / 段落 / 引用 / 行内标记） */
+  function parseMarkdown(source) {
+    var rawLines = source.replace(/\r\n?/g, '\n').replace(/\t/g, '  ').split('\n');
+    var lines = [];
+    for (var i = 0; i < rawLines.length; i++) {
+      var runs = splitSubitemRuns(rawLines[i]);
+      for (var j = 0; j < runs.length; j++) lines.push(runs[j]);
+    }
+
+    var blocks = [];
+    var stack = [];
+    var paragraph = [];
+    var clause = null;
+
+    function container() {
+      var frame = stack[stack.length - 1];
+      if (!frame) return blocks;
+      var item = frame.list.items[frame.list.items.length - 1];
+      return item ? item.children : blocks;
+    }
+
+    function flushParagraph() {
+      if (!paragraph.length) return;
+      var text = paragraph.join(' ').replace(/\s+/g, ' ').trim();
+      paragraph = [];
+      if (text) container().push({ type: 'paragraph', inline: parseInline(text) });
+    }
+
+    function flushClause() {
+      if (!clause) return;
+      var text = clause.parts.join('').replace(/\s+/g, ' ').trim();
+      var number = clause.number;
+      var depth = clause.depth;
+      var subitems = clause.subitems;
+      clause = null;
+      if (text || subitems.length) {
+        container().push({ type: 'clause', number: number, depth: depth, inline: parseInline(text), subitems: subitems });
+      }
+    }
+
+    function flushAll() { flushParagraph(); flushClause(); }
+
+    for (var k = 0; k < lines.length; k++) {
+      var line = lines[k].replace(/\s+$/, '');
+      var trimmed = line.trim();
+      if (!trimmed) { flushAll(); continue; }
+
+      var heading = HEADING_RE.exec(line);
+      if (heading) {
+        flushAll();
+        stack.length = 0;
+        blocks.push({ type: 'heading', level: heading[1].length, inline: parseInline(heading[2].trim()) });
+        continue;
+      }
+
+      var quote = QUOTE_RE.exec(line);
+      if (quote) {
+        flushAll();
+        container().push({ type: 'quote', inline: parseInline(quote[1].trim()) });
+        continue;
+      }
+
+      var clauseHead = CLAUSE_HEAD_RE.exec(trimmed);
+      if (clauseHead && CLAUSE_RE.test(trimmed)) {
+        flushAll();
+        stack.length = 0;
+        clause = {
+          number: clauseHead[1],
+          depth: clauseHead[1].split('.').length,
+          parts: [trimmed.slice(clauseHead[0].length)],
+          subitems: []
+        };
+        continue;
+      }
+
+      if (SUBITEM_RE.test(line) && clause) {
+        clause.subitems.push(parseInline(trimmed.replace(SUBITEM_RE, '')));
+        continue;
+      }
+
+      var item = ITEM_RE.exec(line);
+      if (item) {
+        flushAll();
+        var indent = item[1].replace(/\u3000/g, '  ').length;
+        var ordered = /^\d/.test(item[2]);
+        var inline = parseInline(item[3].trim());
+
+        while (stack.length && stack[stack.length - 1].indent > indent) stack.pop();
+
+        if (stack.length) {
+          var topFrame = stack[stack.length - 1];
+          if (topFrame.indent === indent && topFrame.ordered !== ordered) {
+            var back = null;
+            for (var s = stack.length - 1; s >= 0; s--) {
+              if (stack[s].indent === indent && stack[s].ordered === ordered) { back = stack[s]; break; }
+            }
+            while (back && stack.length && stack[stack.length - 1] !== back) stack.pop();
+          }
+        }
+
+        var sameLevel = stack[stack.length - 1];
+        if (sameLevel && sameLevel.indent === indent && sameLevel.ordered === ordered) {
+          sameLevel.list.items.push({ inline: inline, children: [] });
+          continue;
+        }
+
+        var list = { type: 'list', ordered: ordered, items: [{ inline: inline, children: [] }] };
+        container().push(list);
+        stack.push({ indent: indent, ordered: ordered, list: list });
+        continue;
+      }
+
+      if (clause) { clause.parts.push(trimmed); continue; }
+
+      if (!paragraph.length) {
+        var lead = line.length - line.trimStart().length;
+        if (lead === 0) stack.length = 0;
+      }
+      paragraph.push(trimmed);
+    }
+
+    flushAll();
+    return blocks;
+  }
+
+  /** 流式渲染：切出"已写完的完整行"与"正在输入的最后一行" */
+  function splitStreamingTail(text) {
+    var cut = text.lastIndexOf('\n');
+    return cut < 0
+      ? { stable: '', tail: text }
+      : { stable: text.slice(0, cut + 1), tail: text.slice(cut + 1) };
+  }
+
+  /**
+   * 清掉引用标记（与主站 App.vue 的 cleanCitationMarkers 一致，只多支持一种写法）：
+   * "（来源：[参考1][参考2]）"、"参考来源：[参考1]" 与裸 "[参考1]" 都不该出现在正文里
+   * ——来源统一走下方的"参考来源"区域。
+   */
+  function cleanCitationMarkers(text) {
+    return text
+      .replace(/[（(]?[ \t]*(?:参考)?[ \t]*来源[ \t]*[:：][ \t]*(?:\[参考\d+\][ \t]*)+[）)]?/g, '')
+      .replace(/\[参考\d+\]/g, '');
+  }
+
+  /**
+   * 流式期间的"半截标记"：累计文本可能正好停在 "（来源：[参考" 或 "[参考1" 这种中间，
+   * 完整标记要等收全才清得掉；这里先把末尾这半截藏起来，避免闪一下（流断了也不会永久留下）。
+   * 完整文本走 renderAnswer 时不需要它。
+   */
+  function trimPartialMarker(text) {
+    return text.replace(/\[参考\d*$|[（(]?[ \t]*来源[ \t]*[:：][ \t]*$/, '');
+  }
+
+  /** 节点树 → 渲染块：连续条款合并成一个有序列表，编号按整条回答连续 */
+  function toRenderBlocks(nodes) {
+    var drafts = [];
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].type === 'clause') {
+        drafts.push({ number: nodes[i].number, depth: nodes[i].depth, inline: nodes[i].inline, subitems: nodes[i].subitems });
+      }
+    }
+    var labels = labelClauses(drafts);
+    var out = [];
+    var cursor = 0;
+    var runSize = 0;
+
+    function flushClauses() {
+      if (!runSize) return;
+      out.push({ kind: 'clauses', items: labels.slice(cursor, cursor + runSize) });
+      cursor += runSize;
+      runSize = 0;
+    }
+
+    for (var k = 0; k < nodes.length; k++) {
+      var node = nodes[k];
+      if (node.type === 'heading') {
+        flushClauses();
+        out.push({ kind: 'heading', level: node.level, inline: node.inline });
+      } else if (node.type === 'quote') {
+        flushClauses();
+        out.push({ kind: 'quote', inline: node.inline });
+      } else if (node.type === 'list') {
+        flushClauses();
+        out.push({ kind: 'list', ordered: node.ordered, items: node.items });
+      } else if (node.type === 'clause') {
+        runSize += 1;
+      } else {
+        flushClauses();
+        out.push({ kind: 'paragraph', inline: node.inline });
+      }
+    }
+    flushClauses();
+    return out;
+  }
+
+  /* ── DOM 渲染（全部走 textContent，模型文本不参与 HTML 解析） ── */
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function appendInline(parent, segments) {
+    if (!segments) return;
+    for (var i = 0; i < segments.length; i++) {
+      var seg = segments[i];
+      var cls = seg.bold ? 'md-bold' : (seg.italic ? 'md-italic' : (seg.code ? 'md-code' : ''));
+      if (cls) parent.appendChild(el('span', cls, seg.text));
+      else parent.appendChild(document.createTextNode(seg.text));
+    }
+  }
+
+  function renderNodeList(nodes) {
+    var frag = document.createDocumentFragment();
+    var blocks = toRenderBlocks(nodes);
+    for (var i = 0; i < blocks.length; i++) {
+      var block = blocks[i];
+
+      if (block.kind === 'heading') {
+        var heading = el('h3', 'md-heading md-h' + block.level);
+        appendInline(heading, block.inline);
+        frag.appendChild(heading);
+        continue;
+      }
+
+      if (block.kind === 'quote') {
+        var quote = el('blockquote', 'md-quote');
+        appendInline(quote, block.inline);
+        frag.appendChild(quote);
+        continue;
+      }
+
+      if (block.kind === 'list') {
+        var list = el(block.ordered ? 'ol' : 'ul', 'md-list');
+        for (var j = 0; j < block.items.length; j++) {
+          var listItem = block.items[j];
+          var li = document.createElement('li');
+          appendInline(li, listItem.inline);
+          // 与主站一致：子节点包一层 .md-body（MessageBody 自递归），
+          // 这样 ".md-body > :first-child{margin-top:0}" 对列表项里的续行段落同样生效
+          if (listItem.children && listItem.children.length) {
+            var nested = el('div', 'md-body');
+            nested.appendChild(renderNodeList(listItem.children));
+            li.appendChild(nested);
+          }
+          list.appendChild(li);
+        }
+        frag.appendChild(list);
+        continue;
+      }
+
+      if (block.kind === 'clauses') {
+        var clauseList = el('ol', 'md-list md-clause-list');
+        for (var c = 0; c < block.items.length; c++) {
+          var item = block.items[c];
+          var classes = [];
+          if (item.solo) classes.push('is-solo');
+          if (item.soloTitle) classes.push('is-solo-title');
+          if (item.level > 0) classes.push('is-sub');
+          if (item.level > 1) classes.push('is-sub-deep');
+          var row = el('li', classes.join(' '));
+
+          var numClasses = ['md-clause-num'];
+          if (item.level > 0) numClasses.push('is-dot');
+          if (item.level > 1) numClasses.push('is-dot-deep');
+          row.appendChild(el('span', numClasses.join(' '), item.label));
+
+          var textEl = el('div', 'md-clause-text');
+          appendInline(textEl, item.inline);
+          for (var b = 0; b < item.subitems.length; b++) {
+            var sub = el('div', 'md-clause-sub');
+            appendInline(sub, item.subitems[b]);
+            textEl.appendChild(sub);
+          }
+          row.appendChild(textEl);
+          clauseList.appendChild(row);
+        }
+        frag.appendChild(clauseList);
+        continue;
+      }
+
+      var paragraph = el('p', 'md-paragraph');
+      appendInline(paragraph, block.inline);
+      frag.appendChild(paragraph);
+    }
+    return frag;
+  }
+
+  /**
+   * 渲染一条回答。
+   * 流式期间只结构化"已经写完的完整行"，最后一行按纯文本 + 光标显示——
+   * 这样流式与结束后的结构完全一致，不会出现"输出时是一串横线、结束后才变列表"。
+   */
+  function renderAnswer(target, text, streaming) {
+    // 渲染入口再清一次引用标记（幂等）：无论文本从哪条路径来，界面上都不会出现 [参考N]
+    var value = cleanCitationMarkers(text || '');
+    // 流式期间先把末尾那半截标记藏起来（"…（来源：[参考" 不该闪一下）
+    if (streaming) value = trimPartialMarker(value);
+    target.textContent = '';
+    // 与主站 MessageBody.vue 一致：流式期间挂 md-stream-body（主站用它做流式态钩子）
+    if (streaming) target.classList.add('md-stream-body');
+    else target.classList.remove('md-stream-body');
+    var parts = splitStreamingTail(value);
+    target.appendChild(renderNodeList(parseMarkdown(streaming ? parts.stable : value)));
+
+    if (streaming) {
+      var isItem = ITEM_MARKER.test(parts.tail);
+      var tailInline = parseInline(parts.tail.replace(ITEM_MARKER, ''));
+      var tail;
+      if (isItem) {
+        tail = el('ul', 'md-list md-stream-tail');
+        var tailItem = document.createElement('li');
+        appendInline(tailItem, tailInline);
+        tailItem.appendChild(el('span', 'stream-caret'));
+        tail.appendChild(tailItem);
+      } else {
+        tail = el('p', 'md-paragraph md-stream-tail');
+        appendInline(tail, tailInline);
+        tail.appendChild(el('span', 'stream-caret'));
+      }
+      target.appendChild(tail);
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════
+   * 三、页面状态与交互
+   * ══════════════════════════════════════════════════════════ */
+
+  var bodyEl = document.getElementById('embBody');
+  var hotEl = document.getElementById('embHot');
+  var hotListEl = document.getElementById('embHotList');
+  var threadEl = document.getElementById('embThread');
+  var formEl = document.getElementById('embComposer');
+  var inputEl = document.getElementById('embInput');
+  var sendEl = document.getElementById('embSend');
+
+  var state = {
+    /** 检索范围：默认知识库，取不到时保留默认值（热门问题缓存按这个范围预热） */
+    kbId: DEFAULT_KB_ID,
+    /** 会话 ID：同一次页面访问内复用，多轮追问共享上下文 */
+    sessionId: null,
+    asking: false,
+    stream: null,
+    answers: []
+  };
+
+  var frameId = 0;
+  /** 最近一次 rAF 回调时间：用来判断打字机是否真的在跑（宿主隐藏 iframe 时 rAF 会停） */
+  var lastFrameAt = 0;
+  /** 是否跟随最新内容自动滚动：用户往上翻看时不要把他拽回底部 */
+  var stickToBottom = true;
+
+  bodyEl.addEventListener('scroll', function () {
+    stickToBottom = bodyEl.scrollTop + bodyEl.clientHeight >= bodyEl.scrollHeight - 24;
+  });
+
+  /** 跟随滚动（用户已经翻上去时保持不动） */
+  function scrollToEnd() {
+    if (!stickToBottom) return;
+    bodyEl.scrollTop = bodyEl.scrollHeight;
+  }
+
+  /** 新提问时强制拉到底：此刻用户的意图就是看最新这一条 */
+  function forceScrollToEnd() {
+    stickToBottom = true;
+    bodyEl.scrollTop = bodyEl.scrollHeight;
+  }
+
+  function updateSendState() {
+    sendEl.disabled = state.asking || !inputEl.value.trim();
+  }
+
+  function setAsking(value) {
+    state.asking = value;
+    updateSendState();
+    var hotButtons = hotListEl.querySelectorAll('.hot-item');
+    for (var i = 0; i < hotButtons.length; i++) hotButtons[i].disabled = value;
+  }
+
+  function resizeInput() {
+    inputEl.style.height = 'auto';
+    // 最小 30px（与 CSS 一致，避免第一次输入时高度跳一下），最多 96px（约 4 行）后内部滚动
+    inputEl.style.height = Math.min(Math.max(inputEl.scrollHeight, 30), 96) + 'px';
+  }
+
+  function renderHotQuestions() {
+    hotListEl.textContent = '';
+    for (var i = 0; i < HOT_QUESTIONS.length; i++) {
+      (function (question) {
+        var button = el('button', 'hot-item', question);
+        button.type = 'button';
+        button.title = question;
+        button.addEventListener('click', function () {
+          if (state.asking) return;
+          // 不清空输入框：用户已经打的字留着，别因为点了一个热门问题就丢掉
+          ask(question);
+        });
+        hotListEl.appendChild(button);
+      })(HOT_QUESTIONS[i]);
+    }
+  }
+
+  function closeStream() {
+    if (!state.stream) return;
+    try { state.stream.close(); } catch (error) { /* 已经关闭 */ }
+    state.stream = null;
+  }
+
+  function appendUserTurn(turn, question) {
+    var row = el('div', 'msg user');
+    row.appendChild(el('span', 'avatar avatar-user', '我'));
+    var content = el('div', 'msg-content');
+    content.appendChild(el('p', 'msg-text', question));
+    row.appendChild(content);
+    turn.appendChild(row);
+  }
+
+  /** 新建一条回答占位：头像 + 作者 + 三点加载 + 状态文案 + 正文容器 */
+  function appendAnswerTurn(turn) {
+    var row = el('div', 'msg assistant');
+    row.appendChild(el('span', 'avatar avatar-ai', '✦'));
+
+    var main = el('div', 'msg-content');
+    var head = el('div', 'msg-head');
+    head.appendChild(el('span', 'msg-author', '农田 AI 助手'));
+    var headDots = el('span', 'dots');
+    headDots.appendChild(el('i'));
+    headDots.appendChild(el('i'));
+    headDots.appendChild(el('i'));
+    head.appendChild(headDots);
+    main.appendChild(head);
+
+    var status = el('div', 'status');
+    var statusText = el('span', null, LOADING_TEXT);
+    status.appendChild(statusText);
+    main.appendChild(status);
+
+    var body = el('div', 'md-body');
+    body.hidden = true;
+    main.appendChild(body);
+
+    row.appendChild(main);
+    turn.appendChild(row);
+
+    var answer = {
+      raw: null,
+      shown: 0,
+      done: false,
+      streaming: true,
+      body: body,
+      status: status,
+      statusText: statusText,
+      headDots: headDots,
+      main: main,
+      sources: null,
+      sourceBox: null
+    };
+    state.answers.push(answer);
+    // 长会话下只保留最近 30 条参与揭示扫描；更早的都早已收尾，DOM 不受影响
+    if (state.answers.length > 30) state.answers.splice(0, state.answers.length - 30);
+    return answer;
+  }
+
+  /** 打字机：按帧从 raw 里揭示字符，积压越多揭示越快 */
+  function pump() {
+    if (frameId) return;
+    frameId = window.requestAnimationFrame(function () {
+      frameId = 0;
+      lastFrameAt = Date.now();
+      var revealing = false;
+      for (var i = 0; i < state.answers.length; i++) {
+        var answer = state.answers[i];
+        // 已收尾的回答不再参与揭示，否则迟到的帧会把完整渲染退回"流式 + 光标"
+        if (answer.raw === null || answer.streaming === false) continue;
+        var target = answer.raw;
+        var shown = Math.min(answer.shown, target.length);
+        var grew = false;
+        if (shown < target.length) {
+          var backlog = target.length - shown;
+          shown = Math.min(target.length, shown + Math.max(1, Math.ceil(backlog / 18)));
+          grew = true;
+          revealing = true;
+        }
+        if (grew || shown !== answer.shown) {
+          answer.shown = shown;
+          renderAnswer(answer.body, target.slice(0, shown), true);
+        }
+        if (!grew && answer.done && answer.streaming) finalize(answer);
+      }
+      if (revealing) {
+        scrollToEnd();
+        pump();
+      }
+    });
+  }
+
+  /**
+   * 收尾兜底：finalize 只能由打字机（rAF）触发，而宿主把 iframe 设成 display:none、或把 iframe 摘掉时，
+   * rAF 可能不再回调——那样回答会一直停在"流式"（三点/光标不停、参考来源不出）。
+   * 这里在 done 之后看一眼：帧确实停了（≥800ms 没跑过）就直接收尾；帧还在跑就交给打字机自己收。
+   */
+  function finalizeIfFramesStalled(answer) {
+    window.setTimeout(function () {
+      if (!answer.streaming) return;
+      if (Date.now() - lastFrameAt < 800) return;
+      finalize(answer);
+    }, 900);
+  }
+
+  /** 收尾：停掉光标/加载动画，展示完整回答与参考来源 */
+  function finalize(answer) {
+    answer.streaming = false;
+    answer.status.hidden = true;
+    answer.headDots.hidden = true;
+    answer.body.hidden = false;
+    var text = answer.raw === null ? '' : answer.raw;
+    renderAnswer(answer.body, text, false);
+    renderSources(answer);
+    scrollToEnd();
+  }
+
+  /** 文档图标：等价于主站 SourceCards 里的 lucide FileText（14px 描边，内联 SVG，无外部资源） */
+  function sourceIcon() {
+    var NS = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    // 纯装饰：不要让读屏软件念出一个没有名字的图形
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    var paths = [
+      'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z',
+      'M14 2v4a2 2 0 0 0 2 2h4',
+      'M10 9H8',
+      'M16 13H8',
+      'M16 17H8'
+    ];
+    for (var i = 0; i < paths.length; i++) {
+      var path = document.createElementNS(NS, 'path');
+      path.setAttribute('d', paths[i]);
+      svg.appendChild(path);
+    }
+    return svg;
+  }
+
+  /**
+   * 参考来源：与主站 SourceCards 一致——文档图标 + 「文档名 + 第 N 页」，
+   * 章节标题与命中摘要放在 title 悬浮提示里，按「文档 + 页」去重。
+   */
+  function renderSources(answer) {
+    if (answer.sourceBox || !answer.sources || !answer.sources.length) return;
+    var seen = {};
+    var box = el('div', 'sources');
+    box.appendChild(el('div', 'sources-title', '参考来源'));
+    var count = 0;
+    for (var i = 0; i < answer.sources.length; i++) {
+      var source = answer.sources[i] || {};
+      var key = (source.docId || '?') + '-' + (source.pageNum === null || source.pageNum === undefined ? 'x' : source.pageNum);
+      if (seen[key]) continue;
+      seen[key] = true;
+
+      var row = el('div', 'source');
+      row.appendChild(sourceIcon());
+      row.appendChild(el('span', 'source-name', source.docName || '未命名文档'));
+      if (source.pageNum) row.appendChild(el('span', 'source-page', '第 ' + source.pageNum + ' 页'));
+      // 刻意不挂 title：原生悬浮提示是个黑色框，太长且会压住正文
+      box.appendChild(row);
+      count += 1;
+    }
+    if (!count) return;
+    answer.main.appendChild(box);
+    answer.sourceBox = box;
+  }
+
+  function setStatus(answer, message) {
+    if (answer.streaming === false) return;
+    answer.statusText.textContent = message;
+  }
+
+  /** 服务端已给出正文：收起"加载中"，展开正文容器 */
+  function beginAnswerText(answer) {
+    if (answer.streaming === false) return;   // 已收尾的回答不再被迟到的 token 改动
+    answer.status.hidden = true;
+    answer.body.hidden = false;
+  }
+
+  /* ══════════════════════════════════════════════════════════
+   * 四、问答流程
+   *    1. 输入问题 → 2. 发送/Enter → 3. 提交问题 + 当前会话 ID
+   *    4. SSE 流式接收 → 5. 逐段显示 → 6. 结束后展示来源
+   *    7. 后续问题继续用同一个会话 ID
+   * ══════════════════════════════════════════════════════════ */
+
+  function ask(question) {
+    var text = (question || '').trim();
+    if (!text || state.asking) return;
+
+    // 回答区域覆盖热门问题
+    hotEl.hidden = true;
+    threadEl.hidden = false;
+
+    var turn = el('div', 'turn');
+    threadEl.appendChild(turn);
+    appendUserTurn(turn, text);
+    var answer = appendAnswerTurn(turn);
+    setAsking(true);
+    forceScrollToEnd();
+    // 多轮追问：发送后把焦点还给输入框
+    try { inputEl.focus(); } catch (error) { /* 宿主环境限制焦点时不处理 */ }
+
+    /* 进这次请求前会话里已有的 sessionId：请求失败且一个字都没收到时，多半是这个会话已失效
+       （后端重启、会话记录被清理），后端 getOrCreateSession 会直接抛“会话不存在” → 400。
+       这种情况下清掉旧 ID 并自动重来一次，否则页面会被一个死会话 ID 卡死，后面每次提问都失败。 */
+    var staleSessionId = state.sessionId;
+    var retriedStaleSession = false;
+
+    var query = 'question=' + encodeURIComponent(text) + '&kbIds=' + encodeURIComponent(state.kbId);
+    if (state.sessionId) query += '&sessionId=' + encodeURIComponent(state.sessionId);
+
+    var received = false;
+    var rawText = '';
+    var stream;
+
+    /* 客户端兜底超时（按"静默"计时）：服务端在建立 SSE 之前就卡住、或代理黑洞时，
+       EventSource 不报任何错，页面会永远停在"正在检索…"、按钮与热门问题一直禁用。
+       每收到一次 status/token 就重新计时，所以正常的长回答不会被误杀；
+       只有连续 75s（大于后端 SseEmitter 的 60s）一个字节都没有才收尾。 */
+    var askTimer = 0;
+    function onAskTimeout() {
+      if (answer.done || answer.streaming === false) return;
+      if (state.answers[state.answers.length - 1] !== answer) return;
+      closeStream();
+      setAsking(false);
+      answer.done = true;
+      if (received) {
+        answer.raw = cleanCitationMarkers(rawText) + '\n\n（回答超时，已中止）';
+      } else {
+        answer.raw = ANSWER_TIMEOUT;
+      }
+      finalize(answer);
+    }
+    function resetAskTimer() {
+      window.clearTimeout(askTimer);
+      askTimer = window.setTimeout(onAskTimeout, ASK_TIMEOUT_MS);
+    }
+    resetAskTimer();
+
+    try {
+      stream = new EventSource(API + '/chat/stream?' + query);
+    } catch (error) {
+      window.clearTimeout(askTimer);
+      setAsking(false);
+      answer.raw = FALLBACK_ERROR;
+      finalize(answer);
+      return;
+    }
+    state.stream = stream;
+
+    stream.addEventListener('session', function (event) {
+      var sessionId = event.data;
+      if (sessionId) state.sessionId = sessionId;
+    });
+
+    stream.addEventListener('status', function (event) {
+      resetAskTimer();
+      if (received) return;
+      var message = LOADING_TEXT;
+      try {
+        var payload = JSON.parse(event.data);
+        if (payload && payload.message) message = payload.message;
+      } catch (error) { /* 状态报文异常时沿用默认文案 */ }
+      setStatus(answer, message);
+    });
+
+    stream.addEventListener('token', function (event) {
+      resetAskTimer();
+      received = true;
+      rawText += event.data;
+      // 与主站一致：累计文本过一遍引用标记清理，正文里不再出现 [参考N]
+      answer.raw = cleanCitationMarkers(rawText);
+      beginAnswerText(answer);
+      pump();
+    });
+
+    stream.addEventListener('done', function (event) {
+      window.clearTimeout(askTimer);
+      closeStream();
+      setAsking(false);
+      var sources = [];
+      try {
+        var payload = JSON.parse(event.data);
+        if (payload && Object.prototype.toString.call(payload.sources) === '[object Array]') sources = payload.sources;
+      } catch (error) { /* 无来源时只展示回答正文 */ }
+      answer.sources = sources;
+      if (!received) {
+        answer.raw = EMPTY_ANSWER;
+        answer.done = true;
+        finalize(answer);
+        return;
+      }
+      // 先落文本，再置 done：done=true 之后只剩打字机负责收尾，中间不能有任何可能抛错的分支
+      answer.raw = cleanCitationMarkers(rawText);
+      answer.done = true;
+      pump();
+      finalizeIfFramesStalled(answer);
+    });
+
+    stream.addEventListener('error', function (event) {
+      var isServerErrorEvent = event instanceof MessageEvent;
+      var message = '';
+      if (isServerErrorEvent) {
+        try {
+          var payload = JSON.parse(event.data);
+          if (payload && payload.message) message = payload.message;
+        } catch (error) { /* 非 JSON 报文按断流处理 */ }
+      }
+      window.clearTimeout(askTimer);
+      closeStream();
+
+      /* 会话失效自愈：只在"传输层失败"（HTTP 400/断连，EventSource 读不到状态码和 body）且一个字都没收到时才重试。
+         服务端主动推的 error 事件（生成失败、系统内部错误）是另一回事——它有 message，必须原样告诉用户，
+         不能吞掉、也不该拿新会话重跑一遍。 */
+      if (!received && !isServerErrorEvent && staleSessionId && !retriedStaleSession) {
+        retriedStaleSession = true;
+        state.sessionId = null;
+        setAsking(false);
+        if (turn.parentNode) turn.parentNode.removeChild(turn);
+        if (state.answers[state.answers.length - 1] === answer) state.answers.pop();
+        ask(text);
+        return;
+      }
+
+      setAsking(false);
+      if (received) {
+        /* 已经拿到正文的：保留已生成内容交给打字机揭示完（不跳变），末尾补一句中断提示，
+           否则用户看到的是"被截断的答案"却不知道发生了什么。 */
+        answer.raw = cleanCitationMarkers(rawText) + (message ? '\n\n（回答中断：' + message + '）' : '');
+        answer.done = true;
+        pump();
+        finalizeIfFramesStalled(answer);
+      } else {
+        answer.raw = message || FALLBACK_ERROR;
+        answer.done = true;
+        finalize(answer);
+      }
+    });
+  }
+
+  function submit() {
+    var text = inputEl.value.trim();
+    if (!text || state.asking) return;
+    inputEl.value = '';
+    resizeInput();
+    updateSendState();
+    ask(text);
+  }
+
+  /* ── 事件绑定 ───────────────────────────────────────────── */
+
+  formEl.addEventListener('submit', function (event) {
+    event.preventDefault();
+    submit();
+  });
+
+  var composing = false;
+  inputEl.addEventListener('compositionstart', function () { composing = true; });
+  inputEl.addEventListener('compositionend', function () { composing = false; });
+  inputEl.addEventListener('input', function () {
+    resizeInput();
+    updateSendState();
+  });
+  inputEl.addEventListener('keydown', function (event) {
+    // 中文输入法回车确认候选词时不能发送
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    if (event.isComposing || composing || event.keyCode === 229) return;
+    event.preventDefault();
+    submit();
+  });
+
+  /**
+   * 检索范围：与首页同规则——优先默认知识库，其次列表第一个。
+   * 取不到时保留 DEFAULT_KB_ID，让热门问题的缓存命中概率最大。
+   */
+  function loadScope() {
+    fetch(API + '/kb', { headers: { Accept: 'application/json' } })
+      .then(function (response) {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+      })
+      .then(function (body) {
+        var list = (body && body.code === 200 && Object.prototype.toString.call(body.data) === '[object Array]') ? body.data : [];
+        if (!list.length) return;
+        var preferred = null;
+        var firstId = null;
+        for (var i = 0; i < list.length; i++) {
+          var id = Number(list[i] && list[i].id);
+          if (!isFinite(id)) continue;              // 后端返回脏数据时不要拼出 kbIds=NaN
+          if (firstId === null) firstId = id;
+          if (id === DEFAULT_KB_ID) { preferred = id; break; }
+        }
+        if (preferred !== null) state.kbId = preferred;
+        else if (firstId !== null) state.kbId = firstId;
+      })
+      .catch(function () {
+        // 后端不可用时保留默认知识库；提问会得到统一的错误提示
+      });
+  }
+
+  renderHotQuestions();
+  updateSendState();
+  loadScope();
+})();
+</script>
+</body>
+</html>
