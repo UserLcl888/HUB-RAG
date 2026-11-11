@@ -5,6 +5,7 @@ import KnowledgeGraph from './views/KnowledgeGraph.vue'
 import DocumentReview from './views/DocumentReview.vue'
 import MessageBody from './components/MessageBody.vue'
 import SourceCards from './components/SourceCards.vue'
+import VoiceInput from './components/VoiceInput.vue'
 import {
   chatStreamUrl, createKnowledgeBase, deleteChatSession, deleteDocument, downloadDocument,
   getChatMessages, getDocumentStatus, listChatSessions,
@@ -75,6 +76,8 @@ const sessionDocId = ref<number | null>(null)
  */
 const DEFAULT_KNOWLEDGE_BASE_ID = 2
 const asking = ref(false)
+const speechBusy = ref(false)
+const voiceInput = ref<InstanceType<typeof VoiceInput> | null>(null)
 const parsingRequests = ref(new Set<number>())
 let activeStream: EventSource | null = null
 let typewriterFrame = 0
@@ -231,6 +234,7 @@ function resolveSessionDocument(session: SavedChatSession) {
 }
 
 async function openChatSession(sessionId: string) {
+  voiceInput.value?.cancel()
   if (asking.value) {
     notify('请等待当前回答完成后再切换会话')
     return
@@ -435,6 +439,7 @@ function startStatusPolling() {
 }
 
 watch(() => route.fullPath, () => {
+  voiceInput.value?.cancel()
   showUpload.value = route.path === '/documents' && route.query.upload === '1'
   showMobileHistory.value = false
   // 会话操作菜单是 teleport 到 body 的浮层，路由一换必须收起（否则会飘在新页面上）
@@ -486,9 +491,6 @@ function notify(message: string) {
 function navigate(path: string) {
   router.push(path)
 }
-function openUploadFromHome() {
-  router.push({ path: '/documents', query: { upload: '1' } })
-}
 
 /**
  * 首页中部的"大家都在问"与"热门标签"：**写死的展示内容**。
@@ -511,10 +513,11 @@ const activeHotQuestion = ref<string | null>(null)
  * 对话照常落库，历史里能看到这次问答。
  */
 async function askHotQuestion(item: string) {
-  if (asking.value || loadingHistory.value) {
+  if (asking.value || loadingHistory.value || speechBusy.value) {
     notify('请等当前回答结束后再试')
     return
   }
+  voiceInput.value?.commit()
   activeHotQuestion.value = item
   question.value = item
   await nextTick()
@@ -574,6 +577,7 @@ async function startDefaultChat() {
   }
 }
 async function startNewChat(document: RagDocument | null) {
+  voiceInput.value?.cancel()
   activeStream?.close()
   activeStream = null
   asking.value = false
@@ -628,7 +632,7 @@ function pumpTypewriter() {
 function ask() {
   const value = question.value
   const text = value.trim()
-  if (!text || asking.value || loadingHistory.value) return
+  if (!text || asking.value || loadingHistory.value || speechBusy.value) return
   const document = selectedDocument.value
   const kbId = activeKnowledgeBaseId.value
   if (!backendEnabled.value || kbId === null) {
@@ -642,6 +646,7 @@ function ask() {
     return
   }
   const session = chatSession.value
+  voiceInput.value?.commit()
   chatMessages.value.push({ role: 'user', text })
   question.value = ''
   scrollToLatestMessage()
@@ -898,11 +903,7 @@ async function askAboutFile(file: PolicyFile) {
           </div>
           <p v-if="!chatSessions.length" class="sidebar-empty">还没有历史对话，选择文档后开始提问。</p>
         </div>
-        <div class="sidebar-divider"></div>
-        <div class="sidebar-section-title">快捷入口</div>
-        <button class="sidebar-link" @click="navigate('/documents')"><FolderOpen :size="16" />浏览政策文件<ArrowRight :size="14" /></button>
-        <button class="sidebar-link" @click="openUploadFromHome"><Upload :size="16" />上传文档<ArrowRight :size="14" /></button>
-        <div class="sidebar-tip"><ShieldCheck :size="16" /><span>{{ backendEnabled ? '问答基于已解析文档生成。' : '后端未连接，暂不能提问或上传。' }}</span></div>
+        <div class="sidebar-tip"><ShieldCheck :size="16" /><span>{{ backendEnabled ? '政策问题答案基于已解析文档生成。' : '后端未连接，暂不能提问或上传。' }}</span></div>
       </aside>
 
       <section class="workspace-main">
@@ -975,9 +976,14 @@ async function askAboutFile(file: PolicyFile) {
           <div class="chat-composer">
             <label class="sr-only" for="chat-question">向农田 AI 助手提问</label>
             <textarea id="chat-question" ref="questionInput" v-model="question" rows="2" :disabled="!activeKnowledgeBaseId || loadingHistory" :placeholder="selectedDocument ? `向《${selectedDocument.fileName}》提问 · Enter 发送` : sessionDocumentUnavailable ? '当前会话文档不可用，请新建会话' : activeKnowledgeBaseId ? '向高标准农田建设智能AI助手提问 · Enter 发送' : '请先上传并解析文档'" @keydown="handleChatKeydown"></textarea>
-            <div class="composer-footer"><span><ShieldCheck :size="14" />AI 生成内容仅供参考，实际业务请以文件为准</span><button :disabled="!activeKnowledgeBaseId || !question.trim() || asking || loadingHistory" @click="ask()">发送<ArrowUp :size="16" /></button></div>
+            <div class="composer-footer">
+              <span><ShieldCheck :size="14" />AI 生成内容仅供参考，实际业务请以文件为准</span>
+              <div class="composer-actions">
+                <VoiceInput ref="voiceInput" v-model="question" :input="questionInput" :disabled="asking || loadingHistory" @busy="speechBusy = $event" @notice="notify" />
+                <button :disabled="!activeKnowledgeBaseId || !question.trim() || asking || loadingHistory || speechBusy" @click="ask()">发送<ArrowUp :size="16" /></button>
+              </div>
+            </div>
           </div>
-          <span class="composer-note">{{ selectedDocument ? `仅检索《${selectedDocument.fileName}》` : sessionDocumentUnavailable ? '当前会话文档不可用，请新建会话' : activeKnowledgeBaseName ? `检索范围：《${activeKnowledgeBaseName}》整个知识库（含全部已解析资料）` : '知识库里还没有已解析的资料' }}</span>
         </div>
       </section>
     </main>

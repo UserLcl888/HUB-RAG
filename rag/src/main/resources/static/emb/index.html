@@ -5,12 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="color-scheme" content="light" />
 <!-- 排查用：view-source 搜本行即可确认线上加载的是哪一版（改页面时记得同步 +1） -->
-<meta name="emb-page-version" content="13" />
+<meta name="emb-page-version" content="16" />
 <meta name="robots" content="noindex" />
 <title>农田 AI 助手 · 智能问答</title>
+<link rel="stylesheet" href="/api/v1/speech/assets/speech-input.css" />
 <!-- 内联 SVG 图标：不引入图片资源，也避免顶层打开时 favicon 404 -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='9'%20fill='%232fbf8e'/%3E%3Ctext%20x='16'%20y='23'%20font-size='18'%20text-anchor='middle'%20fill='%23ffffff'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E" />
 <!--
+  v16 改动：暂停 / 继续右侧增加对勾，结束整次录音并保留文字，不自动发送。
+  v15 改动：语音实时回填原输入框，右侧支持暂停 / 继续，按钮悬停显示取消 / 暂停 / 继续。
+  v14 改动：语音输入使用后端共享录音模块，不自动发送。
+
   v13 改动：参考来源卡片去掉原生 title 悬浮提示（那个黑色框太长、会压住正文）。
             卡片仍显示「文档图标 + 文件名 + 第 N 页」，其余一切不变
 
@@ -67,7 +72,7 @@
   设计约定
   · 只包含：热门问题 / 问题输入框 / 发送按钮 / 回答区域（覆盖热门问题）/ 参考来源 / 加载中。
     历史会话列表、文件管理、iframe 嵌入代码都不在页面内；悬浮窗外观与开关由外层负责。
-  · 页面自包含（无构建、无外部依赖、无图片资源），接口与主站完全一致：
+  · 页面无构建、无第三方依赖、无图片资源；语音模块从后端同源加载，问答接口与主站完全一致：
       GET /api/v1/kb                       取检索范围（与首页同一个默认知识库）
       GET /api/v1/chat/stream?question=&kbIds=&sessionId=   SSE 流式问答
   · 热门问题与首页一致，答案已被预热进 Redis 答案缓存（同一 kbIds + docId 为空才命中），
@@ -268,6 +273,8 @@
   }
   .composer button:hover:not(:disabled) { background: var(--emb-send-bg-hover); }
   .composer button:disabled { background: var(--emb-send-bg-disabled); color: var(--emb-send-text-disabled); cursor: not-allowed; }
+  .speech-notice { max-width: 760px; margin: 7px auto 0; color: #a14e33; font-size: 12px; }
+  .speech-host { display: contents; }
 </style>
 </head>
 <body>
@@ -289,8 +296,10 @@
              （pointer-events:none + 无 hover 态，所以不会被误当成可点的按钮） -->
         <span class="composer-mark" aria-hidden="true">✦</span>
         <textarea id="embInput" rows="1" placeholder="请输入问题，如：如何进行工程管理？"></textarea>
+        <span class="speech-host" id="embVoice"></span>
         <button id="embSend" type="submit" disabled>发送</button>
       </form>
+      <div class="speech-notice" id="embSpeechNotice" role="status" hidden></div>
     </div>
   </div>
 
@@ -735,6 +744,9 @@
   var formEl = document.getElementById('embComposer');
   var inputEl = document.getElementById('embInput');
   var sendEl = document.getElementById('embSend');
+  var speechNoticeEl = document.getElementById('embSpeechNotice');
+  var voice = null;
+  var speechBusy = false;
 
   var state = {
     /** 检索范围：默认知识库，取不到时保留默认值（热门问题缓存按这个范围预热） */
@@ -769,7 +781,10 @@
   }
 
   function updateSendState() {
-    sendEl.disabled = state.asking || !inputEl.value.trim();
+    sendEl.disabled = state.asking || speechBusy || !inputEl.value.trim();
+    if (voice) voice.setDisabled(state.asking);
+    var hotButtons = hotListEl.querySelectorAll('.hot-item');
+    for (var i = 0; i < hotButtons.length; i++) hotButtons[i].disabled = state.asking || speechBusy;
   }
 
   function setAsking(value) {
@@ -1001,7 +1016,8 @@
 
   function ask(question) {
     var text = (question || '').trim();
-    if (!text || state.asking) return;
+    if (!text || state.asking || speechBusy) return;
+    if (voice) voice.commit();
 
     // 回答区域覆盖热门问题
     hotEl.hidden = true;
@@ -1156,7 +1172,8 @@
 
   function submit() {
     var text = inputEl.value.trim();
-    if (!text || state.asking) return;
+    if (!text || state.asking || speechBusy) return;
+    if (voice) voice.commit();
     inputEl.value = '';
     resizeInput();
     updateSendState();
@@ -1217,6 +1234,33 @@
   renderHotQuestions();
   updateSendState();
   loadScope();
+  import('/api/v1/speech/assets/speech-input.js')
+    .then(function (module) {
+      voice = new module.SpeechInput({
+        root: document.getElementById('embVoice'),
+        input: inputEl,
+        getText: function () { return inputEl.value; },
+        setText: function (text) {
+          inputEl.value = text;
+          resizeInput();
+          updateSendState();
+        },
+        onBusyChange: function (busy) {
+          speechBusy = busy;
+          if (busy) speechNoticeEl.hidden = true;
+          updateSendState();
+        },
+        onNotice: function (message) {
+          speechNoticeEl.textContent = message;
+          speechNoticeEl.hidden = false;
+        }
+      });
+      voice.setDisabled(state.asking);
+    })
+    .catch(function () {
+      speechNoticeEl.textContent = '语音模块未加载，请确认已启动修改后的后端并刷新页面';
+      speechNoticeEl.hidden = false;
+    });
 })();
 </script>
 </body>

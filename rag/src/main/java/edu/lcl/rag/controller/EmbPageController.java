@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * 独立问答页（悬浮窗内嵌内容）入口：{@code http://<后端地址>:8080/emb}。
  *
- * <p>页面本体是静态资源 {@code classpath:/static/emb/index.html}（自包含，无构建、无外部依赖）。
+ * <p>页面本体是静态资源 {@code classpath:/static/emb/index.html}（无构建，语音脚本同源加载）。
  * 这里只补两个显式入口 {@code /emb} 与 {@code /emb/}：
  * 目录形式的请求不会被静态资源处理器解析成 index.html，必须显式映射，
  * 这样前端同学拿到的地址不需要带 {@code /index.html} 或结尾斜杠。

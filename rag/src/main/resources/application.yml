@@ -1,0 +1,116 @@
+spring:
+  application:
+    name: rag
+
+  datasource:
+    url: jdbc:postgresql://47.110.140.13:5432/rag
+    username: postgres
+    password: java123
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      database: 10
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+      password: java
+
+  task:
+    execution:
+      pool:
+        core-size: 4
+        max-size: 8
+        queue-capacity: 100
+      thread-name-prefix: "index-task-"
+
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 100MB
+
+  ai:
+    openai:
+      base-url: ${DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+      api-key: sk-afa044516e6648c1a2fc78c577f6ec71
+      chat:
+        options:
+          model: ${CHAT_MODEL:qwen-plus}
+          temperature: 0.1
+          max-tokens: 4096
+      embedding:
+        base-url: ${DASHSCOPE_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+        api-key: sk-afa044516e6648c1a2fc78c577f6ec71
+        options:
+          model: text-embedding-v3
+
+  cache:
+    type: redis
+    redis:
+      time-to-live: 600000
+      cache-null-values: false
+
+minio:
+  endpoint: http://103.236.54.34:9000
+  access-key: vFOY2dajnJttpVH9GMBh
+  secret-key: 3bgYXXkM2u3koZTlLLcc23YnOuge3vlqqeJZ8OPu
+  bucket: rag-documents
+
+reranker:
+  endpoint: ${RERANKER_ENDPOINT:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}
+  api-key: sk-afa044516e6648c1a2fc78c577f6ec71
+  model: gte-rerank-v2
+  timeout-ms: 3000
+  top-n: 5
+
+rag:
+  chat:
+    require-document-scope: false
+    auto-bind-document: false
+  chunk:
+    max-child-characters: 1200
+    max-parent-characters: 3000
+  retrieval:
+    vector-top-k: 20
+    fulltext-top-k: 20
+    return-top-n: 5
+    child-rerank-top-n: 15
+    min-score: 0.5
+  context:
+    max-tokens: 9000
+  cache:
+    embedding-ttl: 7d
+    query-ttl: 10m
+    answer-ttl: 7d
+
+speech:
+  api-key: ${ASR_API_KEY:${DASHSCOPE_API_KEY:${spring.ai.openai.api-key:}}}
+  workspace-id: ${ASR_WORKSPACE_ID:ws-o5sb44ika8bh4ajq}
+  model: qwen-audio-3.1-asr-flash-message
+  allowed-origins: ${ASR_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
+  max-concurrent: 5
+  max-per-ip: 2
+
+logging:
+  level:
+    edu.lcl.rag: INFO
+    org.springframework.ai: WARN
+  pattern:
+    console: "%d{HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

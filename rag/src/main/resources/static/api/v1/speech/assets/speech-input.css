@@ -1,0 +1,162 @@
+.speech-widget {
+  --speech-bg: #fff;
+  --speech-text: #223c34;
+  --speech-muted: #6e857d;
+  --speech-line: #cde5dc;
+  --speech-soft: #eff9f4;
+  display: contents;
+}
+
+html[data-theme='dark'] .speech-widget {
+  --speech-bg: #13252b;
+  --speech-text: #e3f3ed;
+  --speech-muted: #97b2a7;
+  --speech-line: #33594c;
+  --speech-soft: #1b3830;
+}
+
+.chat-composer,
+.composer {
+  position: relative;
+}
+
+.speech-widget [hidden] {
+  display: none !important;
+}
+
+.chat-composer .speech-widget button:is(.speech-mic, .speech-cancel, .speech-toggle, .speech-finish),
+.composer .speech-widget button:is(.speech-mic, .speech-cancel, .speech-toggle, .speech-finish) {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--speech-line);
+  border-radius: 50%;
+  background: var(--speech-bg);
+  color: var(--speech-text);
+  cursor: pointer;
+}
+
+.chat-composer .speech-widget button:is(.speech-mic, .speech-cancel, .speech-toggle, .speech-finish):hover:not(:disabled),
+.composer .speech-widget button:is(.speech-mic, .speech-cancel, .speech-toggle, .speech-finish):hover:not(:disabled) {
+  background: var(--speech-soft);
+}
+
+.speech-widget button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.speech-widget button:focus-visible {
+  outline: 2px solid #27af7e;
+  outline-offset: 3px;
+}
+
+.chat-composer .speech-widget button svg,
+.composer .speech-widget button svg {
+  color: inherit;
+}
+
+.chat-composer .speech-widget button:is(.speech-toggle, .speech-finish),
+.composer .speech-widget button:is(.speech-toggle, .speech-finish) {
+  background: #25986e;
+  color: #fff;
+}
+
+.chat-composer .speech-widget button:is(.speech-toggle, .speech-finish):hover:not(:disabled),
+.composer .speech-widget button:is(.speech-toggle, .speech-finish):hover:not(:disabled) {
+  background: #1d7c59;
+}
+
+.speech-widget .speech-panel {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 10px);
+  left: 0;
+  padding: 16px 18px 12px;
+  border: 1px solid var(--speech-line);
+  border-radius: 18px;
+  background: var(--speech-bg);
+  color: var(--speech-text);
+  box-shadow: 0 8px 30px #153c2824;
+}
+
+.speech-widget .speech-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.speech-widget .speech-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.speech-widget .speech-middle {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+}
+
+.speech-widget .speech-status,
+.speech-widget .speech-timer {
+  display: block;
+  color: var(--speech-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.speech-widget .speech-status:empty {
+  display: none;
+}
+
+.speech-panel[data-phase='connecting'] .speech-status::before,
+.speech-panel[data-phase='permission'] .speech-status::before,
+.speech-panel[data-phase='finalizing'] .speech-status::before {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 7px;
+  border: 2px solid var(--speech-line);
+  border-top-color: #25986e;
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: speech-spin .8s linear infinite;
+  content: '';
+}
+
+.speech-widget .speech-wave {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  gap: 4px;
+}
+
+.speech-widget .speech-bar {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 3px;
+  background: #27af7e;
+  transition: height .09s linear;
+}
+
+@keyframes speech-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .speech-widget .speech-status::before { animation: none; }
+  .speech-widget .speech-bar { transition: none; }
+}

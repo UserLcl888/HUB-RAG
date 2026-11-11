@@ -360,8 +360,14 @@ html[data-theme="white"] .current-chat-link{font-size:14.5px}
 /* 标题按字数在渲染时截断（见 App.vue 的 shortSessionTitle），这里只保证单行、不留省略号 */
 html[data-theme="white"] .current-chat-link span{overflow:hidden;white-space:nowrap}
 html[data-theme="white"] .current-chat-link:hover,html[data-theme="white"] .sidebar-link:hover{color:#1c2823;background:#e2ede9;border-color:#bddbcf}
-/* 历史对话列表：高度按"正好 6 条"给死（实测行高 43.56px + 间隙 3.75px → 6×43.56 + 5×3.75 ≈ 280px） */
-html[data-theme="white"] .chat-session-list{min-height:0;max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:3.75px}
+/* 历史对话列表：占满「新建会话」与底部提示之间的高度，但最多只露出 10 条
+   （行高 46px + 间隙 3.75px → 10×46 + 9×3.75 = 493.75px；多出来的在列表内滚动，
+   第 11 条不会被切成半行） */
+html[data-theme="white"] .chat-session-list{flex:1;min-height:0;max-height:calc(10 * 46px + 9 * 3.75px);overflow-y:auto;display:flex;flex-direction:column;gap:3.75px;overscroll-behavior:contain}
+/* 行高写死 46px：深浅两套主题字号不同，写死才能保证"正好 10 条"逐像素对齐。
+   flex:0 0 46px 不可省——行是 column flex 的子项，默认 flex-shrink:1 会被压到
+   内容的 min-height（约 43.6px），那样 10 行只占 470px，第 11 行就露半截。 */
+html[data-theme="white"] .chat-session-list .chat-session-row{flex:0 0 46px;height:46px}
 html[data-theme="white"] .chat-session-list .current-chat-link{width:100%;flex:none}
 html[data-theme="white"] .current-chat-link.is-active{color:#13201a;background:#c8e8dd;border-color:#a3ccbc}
 html[data-theme="white"] .chat-loading{width:min(780px,100%);padding:20px 0;color:#586a6f;font-size:16.5px}
@@ -369,12 +375,12 @@ html[data-theme="white"] .current-chat-link svg,html[data-theme="white"] .sideba
 html[data-theme="white"] .sidebar-link svg:last-child{margin-left:auto;color:#768b8c}
 html[data-theme="white"] .sidebar-empty{margin:3px 10px;color:#7d8f99;font-size:13.75px;line-height:1.7}
 /* 历史对话行：右侧「更多」按钮（垂直居中）→ 行内展开重命名 / 删除。
-   刻意做成"行内展开"而不是绝对定位浮层：.chat-session-list 是滚动容器（max-height:40vh），
+   刻意做成"行内展开"而不是绝对定位浮层：.chat-session-list 是滚动容器，
    浮层会被裁掉，最后几行的菜单点不出来。 */
 html[data-theme="white"] .chat-session-row{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:2.5px}
 /* flex 基准必须是 0：基准为 auto 时，换行判断用的是"标题的内容宽度"，
    标题一长「更多」按钮就会被 flex-wrap 挤到第二行；基准 0 + min-width:0 才能让它恒定留在本行右侧 */
-html[data-theme="white"] .chat-session-list .chat-session-row .current-chat-link{flex:1 1 0;width:auto;min-width:0}
+html[data-theme="white"] .chat-session-list .chat-session-row .current-chat-link{flex:1 1 0;width:auto;min-width:0;height:100%}
 /* 「更多」按钮常驻占位（只改透明度）：
    若用 display:none↔flex 切换，悬浮时它一出现就会把标题挤窄 26px，标题省略号位置会跳。
    常驻占位后：标题区宽度 = 行宽 − 26px 恒定，按钮也永远在同一行右侧的固定位置。 */
@@ -395,7 +401,9 @@ html[data-theme="white"] .session-menu-item.is-danger{color:#cb251a}
 html[data-theme="white"] .session-menu-item.is-danger:hover:not(:disabled){background:#e9dddc;color:#1d100e}
 html[data-theme="white"] .session-rename-input{flex:1 1 auto;min-width:0;height:36px;padding:0 11.25px;border:1px solid #a2c8b9;border-radius:8px;background:#dfeaf1;color:#111413;font-size:14.85px;font-family:inherit;outline:0}
 html[data-theme="white"] .sidebar-divider{height:1px;margin:14px 10px 0;background:#d4dee6}
-html[data-theme="white"] .sidebar-tip{display:flex;gap:8px;margin:auto 10px 0;padding:10px;border:1px solid #cee0e2;border-radius:9px;background:#e2f1ef;color:#728c88;font-size:12.38px;line-height:1.6}
+/* 底部提示：贴满整个侧栏宽度（不再左右各留 10px），保证这句话在小屏也排在一行里 */
+html[data-theme="white"] .sidebar-tip{display:flex;align-items:center;gap:8px;margin:auto 0 0;padding:10px 9px;border:1px solid #cee0e2;border-radius:9px;background:#e2f1ef;color:#728c88;font-size:12.38px;line-height:1.6;white-space:nowrap}
+html[data-theme="white"] .sidebar-tip>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 html[data-theme="white"] .sidebar-tip svg{flex:none;color:#37ae85}
 html[data-theme="white"] .workspace-main{min-width:0;min-height:0;display:flex;flex-direction:column;height:100%;overflow:hidden;padding-left:28px}
 html[data-theme="white"] .workspace-header{height:71px;flex:none;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #d4dee6}
@@ -483,6 +491,7 @@ html[data-theme="white"] .composer-footer svg{color:#40a67f}
 html[data-theme="white"] .composer-footer button{display:flex;align-items:center;gap:7.5px;height:32px;padding:0 12.5px;border:0;border-radius:7px;background:#2dcc98;color:#082f27;font-size:13.75px;font-weight:650}
 html[data-theme="white"] .composer-footer button:disabled{cursor:not-allowed;opacity:1;background:#d1e5e0;color:#748e87}
 html[data-theme="white"] .composer-footer button:not(:disabled):hover{filter:brightness(1.08)}
+html[data-theme="white"] .composer-actions{display:flex;align-items:center;gap:10px}
 html[data-theme="white"] .composer-note{display:block;max-width:100%;overflow:hidden;margin-top:8px;color:#80939c;font-size:12.38px;text-align:center;text-overflow:ellipsis;white-space:nowrap}
 html[data-theme="white"] .chat-composer textarea:disabled {
   cursor: not-allowed;
@@ -731,11 +740,17 @@ html[data-theme="white"] ::-webkit-scrollbar-thumb:hover{background:#bacec4}
 /* 侧边栏"历史对话"列表：直接不显示滚动条，但保留滚动能力 */
 html[data-theme="white"] .chat-session-list{scrollbar-width:none;-ms-overflow-style:none}
 html[data-theme="white"] .chat-session-list::-webkit-scrollbar{width:0;height:0}
-/* 侧栏底部提示：字号放大后"问答基于已解析文档生成。"会折成三行并顶到底边。
-   只在桌面（侧栏固定 220px 宽）缩小一档；移动端是抽屉，宽度足够，保持统一字号。 */
+/* 侧栏底部提示：只在桌面（侧栏固定 256px 宽）缩小一档字号，配合 margin:0 的满宽，
+   保证「政策问题答案基于已解析文档生成。」排在一行；移动端是抽屉，宽度足够，保持统一字号。 */
 @media(min-width:801px){
   html[data-theme="white"] .sidebar-tip{font-size:11.83px;line-height:1.55;padding:9px 10px}
   html[data-theme="white"] .sidebar-tip svg{width:15px;height:15px;margin-top:1px}
+}
+html[data-theme="white"] .voice-input {
+  display: contents;
+}
+html[data-theme="white"] .voice-unavailable {
+  font-size: 12px;
 }
 /*
  * 同 KnowledgeGraph：本页颜色全部走 --rv-* 变量，深色与白色两套取值都在
