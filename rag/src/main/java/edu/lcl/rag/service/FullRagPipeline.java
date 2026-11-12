@@ -1,6 +1,7 @@
 package edu.lcl.rag.service;
 
 import edu.lcl.rag.dto.RagResponse;
+import edu.lcl.rag.assistant.AnswerComposer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -22,6 +23,7 @@ public class FullRagPipeline {
     private final DirectAnswerService directAnswerService;
     private final ChatClient chatClient;
     private final KnowledgeBaseService kbService;
+    private final AnswerComposer composer;
 
     @Value("${rag.retrieval.child-rerank-top-n:15}")
     private int rerankerTopN;
@@ -46,7 +48,7 @@ public class FullRagPipeline {
                 enhancedRetriever.retrieveWithHyde(question, kbIds, 40);
 
         if (candidates.isEmpty()) {
-            return RagResponse.notFound();
+            return noEvidence(question, pipelineStart);
         }
 
         // Step 2：Reranker 精排（候选过少或调用失败时不精排，分数保持 RRF 量级）
@@ -57,14 +59,14 @@ public class FullRagPipeline {
                 confidenceFilter.filter(rerankOutcome.chunks(), rerankOutcome.reranked());
 
         if (filtered.isEmpty()) {
-            return RagResponse.notFound();
+            return noEvidence(question, pipelineStart);
         }
 
         // Step 4：子块命中还原父块；同父块仅保留最高分子块，父块全文参与生成。
         List<ParentContextService.ParentHit> trimmed =
                 parentContextService.selectForContext(question, parentContextService.restore(filtered));
         if (trimmed.isEmpty()) {
-            return RagResponse.notFound();
+            return noEvidence(question, pipelineStart);
         }
 
         // Step 5：构建带引用编号的 context + 用 RagPromptTemplate 生成 System Prompt
@@ -93,5 +95,10 @@ public class FullRagPipeline {
                 .user(question)
                 .call()
                 .content();
+    }
+
+    private RagResponse noEvidence(String question, long start) {
+        return RagResponse.builder().answer(composer.noEvidence(question)).sources(List.of()).notFound(true)
+                .latencyMs((int) (System.currentTimeMillis() - start)).build();
     }
 }

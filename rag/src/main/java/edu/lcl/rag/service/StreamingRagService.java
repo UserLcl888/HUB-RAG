@@ -1,6 +1,9 @@
 package edu.lcl.rag.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import edu.lcl.rag.assistant.Intent;
+import edu.lcl.rag.assistant.AnswerComposer;
+import edu.lcl.rag.assistant.ConversationMemorySelector;
 import edu.lcl.rag.dto.RagResponse;
 import edu.lcl.rag.entity.ChatMessage;
 import edu.lcl.rag.entity.KbDocument;
@@ -29,12 +32,14 @@ public class StreamingRagService {
     private final ParentContextService parentContextService;
     private final SourceBuilder sourceBuilder;
     private final ChatSessionService sessionService;
-    private final DirectAnswerService directAnswerService;
     private final edu.lcl.rag.repository.KbDocumentRepository documentRepository;
     private final edu.lcl.rag.repository.KnowledgeBaseRepository knowledgeBaseRepository;
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final AnswerCacheService answerCache;
+    private final HotQuestionCatalog hotQuestions;
+    private final ConversationMemorySelector memory;
+    private final AnswerComposer composer;
 
     /**
      * 流式 RAG 查询，通过 SSE 推送结果。
@@ -45,6 +50,18 @@ public class StreamingRagService {
 
     public void streamQuery(String question, List<Long> kbIds, Long docId,
                             String sessionId, SseEmitter emitter) {
+        streamQuery(question, question, kbIds, docId, sessionId, emitter);
+    }
+
+    /** 检索可用明确承接上下文的完整问题，历史始终保存用户原话。 */
+    public void streamQuery(String originalQuestion, String question, List<Long> kbIds, Long docId,
+                            String sessionId, SseEmitter emitter) {
+        streamQuery(originalQuestion, question, kbIds, docId, sessionId, emitter, null);
+    }
+
+    /** 混合请求由调度层统一落库和结束连接，此回调只接收已经完成的文档回答。 */
+    public void streamQuery(String originalQuestion, String question, List<Long> kbIds, Long docId,
+                            String sessionId, SseEmitter emitter, StreamCompletion completion) {
         long start = System.currentTimeMillis();
         // 客户端断开（关页面 / 刷新 / 切会话）是正常事件：标记后停止推送与生成，
         // 并以 INFO/DEBUG 记录，不再抛异常打断主流程（否则会级联出一串 ERROR 堆栈）。
@@ -54,18 +71,19 @@ public class StreamingRagService {
         emitter.onTimeout(() -> clientGone.set(true));
 
         try {
-            // Step 0：与知识库无关的简单问题（寒暄/身份/算术）直接回答，不检索、不给来源
-            if (directAnswerService.shouldAnswerDirectly(question)) {
-                streamDirectAnswer(question, sessionId, emitter, clientGone, start);
-                return;
-            }
-
-            // Step 0.5：命中答案缓存就直接回放（预设热门问题基本都会命中，秒回且不消耗额度）
-            String cacheKey = answerCache.buildKey(kbIds, docId, question);
-            var cachedAnswer = answerCache.get(cacheKey);
-            if (cachedAnswer.isPresent()) {
-                replayCached(question, sessionId, emitter, clientGone, start, cachedAnswer.get());
-                return;
+            List<ChatMessage> recentHistory = sessionService.getHistory(sessionId);
+            // 公共答案仅用于无历史、未改写、非混合、全库范围的热门问题。
+            // 保守跳过所有已有历史的会话，避免无法证明“独立提问”时复用公共答案。
+            boolean cacheEligible = completion == null && recentHistory.isEmpty() && docId == null
+                    && kbIds != null && !kbIds.isEmpty() && hotQuestions.contains(originalQuestion)
+                    && AnswerCacheService.normalize(originalQuestion).equals(AnswerCacheService.normalize(question));
+            String cacheKey = cacheEligible ? answerCache.buildKey(kbIds, docId, question) : null;
+            if (cacheEligible) {
+                var cachedAnswer = answerCache.get(cacheKey);
+                if (cachedAnswer.isPresent()) {
+                    replayCached(originalQuestion, sessionId, emitter, clientGone, start, cachedAnswer.get(), completion);
+                    return;
+                }
             }
 
             // Step 1：推送"检索中"状态（推不动说明客户端已走，直接放弃，省掉后续检索与生成开销）
@@ -81,13 +99,13 @@ public class StreamingRagService {
             var filtered = confidenceFilter.filter(rerankOutcome.chunks(), rerankOutcome.reranked());
 
             if (filtered.isEmpty()) {
-                sendNotFound(emitter);
+                sendNotFound(originalQuestion, question, sessionId, emitter, start, completion);
                 return;
             }
 
             var trimmed = parentContextService.selectForContext(question, parentContextService.restore(filtered));
             if (trimmed.isEmpty()) {
-                sendNotFound(emitter);
+                sendNotFound(originalQuestion, question, sessionId, emitter, start, completion);
                 return;
             }
 
@@ -99,7 +117,7 @@ public class StreamingRagService {
             }
 
             // Step 4：加载历史对话 + 构建 Prompt
-            List<ChatMessage> history = sessionService.getHistory(sessionId);
+            List<ChatMessage> history = memory.selectForRag(question, recentHistory);
             String context = parentContextService.buildContext(trimmed);
             String systemPrompt = RagPromptTemplate.buildSystemPrompt(
                     context, trimmed.size(), history, sessionInfo(docId, kbIds));
@@ -129,23 +147,19 @@ public class StreamingRagService {
 
             // Step 6：保存对话记录
             String answer = fullAnswer.toString();
+            if (answer.isBlank()) {
+                throw new IllegalStateException("文档生成返回空内容");
+            }
 
             List<RagResponse.Source> sources = sourceBuilder.buildSources(answer, trimmed);
-            String sourcesJson = sourceBuilder.sourcesToJson(sources);
-            // 写入答案缓存（下次同一问题直接回放）；文档变化时缓存代 +1 会自动作废
-            if (!answer.isBlank()) {
+            // 只有独立热门问题允许写公共答案缓存；普通问题、追问和混合请求不读也不写。
+            if (cacheEligible) {
                 answerCache.put(cacheKey, new AnswerCacheService.CachedAnswer(
                         question, answer, sources, LocalDateTime.now().toString()));
             }
-            sessionService.saveMessage(sessionId, question, answer, sourcesJson,
-                    (int) (System.currentTimeMillis() - start));
             sessionService.bindDocumentIfEmpty(sessionId, docId);
-
-            // Step 7：推送来源信息（done 事件）
-            String doneData = objectMapper.writeValueAsString(
-                    new DonePayload(sources, (int) (System.currentTimeMillis() - start)));
-            sendEvent(emitter, SseEmitter.event().name("done").data(doneData));
-            completeQuietly(emitter);
+            finishResponse(originalQuestion, sessionId, answer, sources,
+                    (int) (System.currentTimeMillis() - start), emitter, completion);
 
         } catch (Exception e) {
             if (clientGone.get()) {
@@ -153,9 +167,18 @@ public class StreamingRagService {
                 return;
             }
             log.error("[StreamRAG] 流式生成失败：{}", e.getMessage(), e);
+            if (completion != null) {
+                try {
+                    completion.failed("文档解答失败：本段回答未完成，请稍后重试。"
+                            + "若上方已有生成片段，请勿将其作为完整结论。");
+                    return;
+                } catch (RuntimeException failedCompletion) {
+                    log.error("[StreamRAG] 混合回答收尾失败：{}", failedCompletion.getClass().getSimpleName());
+                }
+            }
             String payload;
             try {
-                payload = objectMapper.writeValueAsString(Map.of("message", "生成失败：" + e.getMessage()));
+                payload = objectMapper.writeValueAsString(Map.of("message", "文档回答生成失败，请稍后重试。"));
             } catch (Exception ignored) {
                 payload = "{\"message\":\"生成失败\"}";
             }
@@ -169,7 +192,7 @@ public class StreamingRagService {
      */
     private void replayCached(String question, String sessionId, SseEmitter emitter,
                               AtomicBoolean clientGone, long start,
-                              AnswerCacheService.CachedAnswer cached) throws Exception {
+                              AnswerCacheService.CachedAnswer cached, StreamCompletion completion) throws Exception {
         if (!sendEvent(emitter, SseEmitter.event()
                 .name("status")
                 .data("{\"type\":\"CACHE\",\"message\":\"正在读取已缓存的回答...\"}"))) {
@@ -193,43 +216,9 @@ public class StreamingRagService {
         }
 
         int elapsed = (int) (System.currentTimeMillis() - start);
-        sessionService.saveMessage(sessionId, question, answer,
-                sourceBuilder.sourcesToJson(sources), elapsed);
-        sendEvent(emitter, SseEmitter.event().name("done").data(
-                objectMapper.writeValueAsString(new DonePayload(sources, elapsed))));
-        completeQuietly(emitter);
+        finishResponse(question, sessionId, answer, sources, elapsed, emitter, completion);
         log.info("[StreamRAG] 命中答案缓存：sessionId={}，字数={}，耗时={}ms",
                 sessionId, answer.length(), elapsed);
-    }
-
-    /**
-     * 直答：与知识库无关的简单问题（寒暄/身份/算术）。
-     * 不检索、不构建上下文、不返回来源，但照常存会话记录，保证历史里能看到这条问答。
-     */
-    private void streamDirectAnswer(String question, String sessionId, SseEmitter emitter,
-                                    AtomicBoolean clientGone, long start) throws Exception {
-        StringBuilder answer = new StringBuilder();
-        directAnswerService.streamAnswer(question)
-                .doOnNext(token -> {
-                    answer.append(token);
-                    if (!sendEvent(emitter, SseEmitter.event().name("token").data(token))) {
-                        clientGone.set(true);
-                    }
-                })
-                .takeWhile(token -> !clientGone.get())
-                .blockLast();
-
-        if (clientGone.get()) {
-            log.info("[StreamRAG] 客户端已断开，停止直答：sessionId={}", sessionId);
-            return;
-        }
-
-        int elapsed = (int) (System.currentTimeMillis() - start);
-        sessionService.saveMessage(sessionId, question, answer.toString(), "[]", elapsed);
-        sendEvent(emitter, SseEmitter.event().name("done").data(
-                objectMapper.writeValueAsString(new DonePayload(List.of(), elapsed))));
-        completeQuietly(emitter);
-        log.info("[StreamRAG] 直答完成（未检索知识库）：question={}，耗时={}ms", question, elapsed);
     }
 
     /**
@@ -299,19 +288,27 @@ public class StreamingRagService {
      */
     public RagResponse syncQuery(String question, List<Long> kbIds, Long docId, String sessionId,
                                  boolean persist) {
+        return syncQuery(question, question, kbIds, docId, sessionId, persist);
+    }
+
+    public RagResponse syncQuery(String originalQuestion, String question, List<Long> kbIds,
+                                 Long docId, String sessionId, boolean persist) {
         long start = System.currentTimeMillis();
+        String sid = sessionId != null
+                ? sessionId
+                : (persist ? sessionService.getOrCreateSession(null, kbIds, docId) : null);
         var candidates = enhancedRetriever.retrieveWithHyde(question, kbIds, docId, 40);
         var rerankOutcome = rerankerService.rerank(question, candidates, 15);
         var filtered = confidenceFilter.filter(rerankOutcome.chunks(), rerankOutcome.reranked());
 
-        if (filtered.isEmpty()) return RagResponse.notFound();
-
-        String sid = sessionId != null
-                ? sessionId
-                : (persist ? sessionService.getOrCreateSession(null, kbIds, docId) : "warmup");
+        if (filtered.isEmpty()) {
+            return persistNotFound(originalQuestion, question, sid, start, persist);
+        }
         var trimmed = parentContextService.selectForContext(question, parentContextService.restore(filtered));
-        if (trimmed.isEmpty()) return RagResponse.notFound();
-        List<ChatMessage> history = sessionService.getHistory(sid);
+        if (trimmed.isEmpty()) {
+            return persistNotFound(originalQuestion, question, sid, start, persist);
+        }
+        List<ChatMessage> history = memory.selectForRag(question, sessionService.getHistory(sid));
         String context = parentContextService.buildContext(trimmed);
         String systemPrompt = RagPromptTemplate.buildSystemPrompt(context, trimmed.size(), history);
 
@@ -320,13 +317,16 @@ public class StreamingRagService {
                 .user(question)
                 .call()
                 .content();
+        if (answer == null || answer.isBlank()) {
+            throw new IllegalStateException("文档生成返回空内容");
+        }
 
         List<RagResponse.Source> sources = sourceBuilder.buildSources(answer, trimmed);
         String sourcesJson = sourceBuilder.sourcesToJson(sources);
         int latencyMs = (int) (System.currentTimeMillis() - start);
 
         if (persist) {
-            sessionService.saveMessage(sid, question, answer, sourcesJson, latencyMs);
+            sessionService.saveMessage(sid, originalQuestion, answer, sourcesJson, latencyMs);
             sessionService.bindDocumentIfEmpty(sid, docId);
         }
 
@@ -334,15 +334,58 @@ public class StreamingRagService {
                 .answer(answer)
                 .sources(sources)
                 .latencyMs(latencyMs)
+                .intent(Intent.RAG)
+                .sessionId(sid)
                 .build();
     }
 
-    private void sendNotFound(SseEmitter emitter) {
-        String msg = "在知识库中未找到与该问题相关的内容。请尝试用不同关键词提问。";
-        sendEvent(emitter, SseEmitter.event().name("token").data(msg));
-        sendEvent(emitter, SseEmitter.event().name("done").data("{\"sources\":[]}"));
+    private RagResponse persistNotFound(String originalQuestion, String question, String sessionId,
+                                        long start, boolean persist) {
+        RagResponse response = RagResponse.builder().answer(composer.noEvidence(question))
+                .sources(List.of()).notFound(true).intent(Intent.RAG).sessionId(sessionId)
+                .latencyMs((int) (System.currentTimeMillis() - start)).build();
+        if (persist) {
+            sessionService.saveMessage(sessionId, originalQuestion, response.getAnswer(), "[]", response.getLatencyMs());
+        }
+        return response;
+    }
+
+    private void sendNotFound(String originalQuestion, String question, String sessionId, SseEmitter emitter,
+                              long start, StreamCompletion completion) throws Exception {
+        String answer = composer.noEvidence(question);
+        if (!sendEvent(emitter, SseEmitter.event().name("token").data(answer))) {
+            return;
+        }
+        int elapsed = (int) (System.currentTimeMillis() - start);
+        finishResponse(originalQuestion, sessionId, answer, List.of(), elapsed, emitter, completion);
+    }
+
+    private void finishResponse(String question, String sessionId, String answer,
+                                List<RagResponse.Source> sources, int elapsed, SseEmitter emitter,
+                                StreamCompletion completion) throws Exception {
+        if (completion != null) {
+            completion.complete(RagResponse.builder().answer(answer).sources(sources).latencyMs(elapsed)
+                    .intent(Intent.RAG).sessionId(sessionId).build());
+            return;
+        }
+        sessionService.saveMessage(sessionId, question, answer, sourceBuilder.sourcesToJson(sources), elapsed);
+        sendEvent(emitter, SseEmitter.event().name("done").data(
+                objectMapper.writeValueAsString(new DonePayload(sources, elapsed))));
         completeQuietly(emitter);
     }
 
-    record DonePayload(List<RagResponse.Source> sources, int latencyMs) {}
+    @FunctionalInterface
+    public interface StreamCompletion {
+        void complete(RagResponse response) throws Exception;
+
+        default void failed(String message) {
+            throw new IllegalStateException(message);
+        }
+    }
+
+    record DonePayload(List<RagResponse.Source> sources, int latencyMs, Intent intent) {
+        DonePayload(List<RagResponse.Source> sources, int latencyMs) {
+            this(sources, latencyMs, Intent.RAG);
+        }
+    }
 }

@@ -68,6 +68,11 @@ export function listKnowledgeBases() {
   return request<KnowledgeBase[]>('/kb');
 }
 
+/** 首页名单由后端统一维护，也作为答案缓存及预热白名单。 */
+export function listHotQuestions() {
+  return request<string[]>('/chat/hot-questions');
+}
+
 export function createKnowledgeBase(name: string) {
   return request<KnowledgeBase>('/kb', {
     method: 'POST',
@@ -113,7 +118,8 @@ export async function downloadDocument(kbId: number, docId: number): Promise<Blo
 }
 
 export function chatStreamUrl(question: string, kbIds: number[], sessionId: string | null, docId: number | null) {
-  const query = new URLSearchParams({ question, kbIds: kbIds.join(',') });
+  const query = new URLSearchParams({ question });
+  if (kbIds.length) query.set('kbIds', kbIds.join(','));
   if (sessionId) query.set('sessionId', sessionId);
   if (docId !== null) query.set('docId', String(docId));
   return `/api/v1/chat/stream?${query.toString()}`;

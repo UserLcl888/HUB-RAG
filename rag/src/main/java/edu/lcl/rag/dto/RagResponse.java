@@ -1,5 +1,6 @@
 package edu.lcl.rag.dto;
 
+import edu.lcl.rag.assistant.Intent;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -17,6 +18,9 @@ public class RagResponse {
     private List<Source> sources;
     private int latencyMs;
     private boolean notFound;
+    private Intent intent;
+    private List<Intent> intents;
+    private String sessionId;
 
     @Data
     @Builder

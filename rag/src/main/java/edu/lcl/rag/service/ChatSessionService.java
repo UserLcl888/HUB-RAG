@@ -1,5 +1,7 @@
 package edu.lcl.rag.service;
 
+import edu.lcl.rag.assistant.Intent;
+import edu.lcl.rag.assistant.ConversationState;
 import edu.lcl.rag.entity.ChatMessage;
 import edu.lcl.rag.entity.ChatSession;
 import edu.lcl.rag.entity.KbDocument;
@@ -32,8 +34,6 @@ public class ChatSessionService {
      */
     @Value("${rag.chat.auto-bind-document:false}")
     private boolean autoBindDocument;
-    /** 最多保留的历史轮数（超出后截断旧消息） */
-    private static final int MAX_HISTORY_ROUNDS = 5;
     /** 会话标题长度上限，与 kb_chat_session.title 的 VARCHAR(200) 对齐 */
     private static final int MAX_TITLE_LENGTH = 200;
 
@@ -93,10 +93,26 @@ public class ChatSessionService {
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在：" + sessionId));
         List<Long> kbIds = parseKnowledgeBaseIds(session.getKbIds());
         Long docId = session.getDocId();
+        // 先闲聊/追问的会话未绑定范围，第一次文档提问才接受页面选择。
+        if (kbIds.isEmpty()) {
+            kbIds = requestKbIds == null ? List.of() : List.copyOf(requestKbIds);
+            docId = requestDocId;
+        }
         if (docId == null && autoBindDocument) {
-            docId = findFallbackDocument(session.getKbIds());
+            docId = findFallbackDocument(kbIds.toString());
         }
         return new RetrievalScope(kbIds, docId);
+    }
+
+    /** 仅在 RAG 范围验证成功后绑定；非 RAG 不调用，不覆盖已绑定的范围。 */
+    @Transactional
+    public void bindRetrievalScopeIfEmpty(String sessionId, RetrievalScope scope) {
+        ChatSession session = requireActiveSession(sessionId);
+        if (parseKnowledgeBaseIds(session.getKbIds()).isEmpty()) {
+            session.setKbIds(scope.kbIds().toString());
+            session.setDocId(scope.docId());
+            sessionRepository.save(session);
+        }
     }
 
     /**
@@ -216,6 +232,18 @@ public class ChatSessionService {
     @Transactional
     public void saveMessage(String sessionId, String question, String answer,
                              String sourcesJson, int latencyMs) {
+        saveMessage(sessionId, question, answer, sourcesJson, latencyMs, Intent.RAG);
+    }
+
+    @Transactional
+    public void saveMessage(String sessionId, String question, String answer,
+                            String sourcesJson, int latencyMs, Intent intent) {
+        saveTurn(sessionId, question, List.of(new AssistantReply(answer, sourcesJson, latencyMs, intent)));
+    }
+
+    /** 混合轮只保存一次用户原话，各助手子回答分别保存 intent 和后端确定的会话状态。 */
+    @Transactional
+    public void saveTurn(String sessionId, String question, List<AssistantReply> replies) {
         // 保存用户消息
         ChatMessage userMsg = new ChatMessage();
         userMsg.setSessionId(sessionId);
@@ -223,18 +251,21 @@ public class ChatSessionService {
         userMsg.setContent(question);
         messageRepository.save(userMsg);
 
-        // 保存助手回答
-        ChatMessage assistantMsg = new ChatMessage();
-        assistantMsg.setSessionId(sessionId);
-        assistantMsg.setRole("ASSISTANT");
-        assistantMsg.setContent(answer);
-        assistantMsg.setSources(sourcesJson);
-        assistantMsg.setLatencyMs(latencyMs);
-        messageRepository.save(assistantMsg);
+        for (AssistantReply reply : replies) {
+            ChatMessage assistantMsg = new ChatMessage();
+            assistantMsg.setSessionId(sessionId);
+            assistantMsg.setRole("ASSISTANT");
+            assistantMsg.setContent(reply.answer());
+            assistantMsg.setIntent(reply.intent());
+            assistantMsg.setConversationState(reply.conversationState());
+            assistantMsg.setSources(reply.intent() == Intent.RAG ? reply.sourcesJson() : "[]");
+            assistantMsg.setLatencyMs(reply.latencyMs());
+            messageRepository.save(assistantMsg);
+        }
 
         // 更新会话消息数和活跃时间
         sessionRepository.findById(sessionId).ifPresent(s -> {
-            s.setMessageCount(s.getMessageCount() + 2);
+            s.setMessageCount(s.getMessageCount() + 1 + replies.size());
             s.setLastActiveAt(LocalDateTime.now());
             if (s.getTitle() == null && question.length() > 0) {
                 s.setTitle(question.substring(0, Math.min(50, question.length())));
@@ -243,19 +274,46 @@ public class ChatSessionService {
         });
     }
 
+    public record AssistantReply(String answer, String sourcesJson, int latencyMs, Intent intent,
+                                 ConversationState conversationState) {
+        public AssistantReply(String answer, String sourcesJson, int latencyMs, Intent intent) {
+            this(answer, sourcesJson, latencyMs, intent, null);
+        }
+    }
+
     /**
      * 获取会话历史（用于多轮对话上下文）。
-     * 最近 MAX_HISTORY_ROUNDS 轮，不含当前问题。
+     * 最近十个用户轮次及其全部子回答，不含当前问题；混合轮不按“两条消息”错误截断。
      */
     public List<ChatMessage> getHistory(String sessionId) {
-        List<ChatMessage> all = messageRepository
-                .findBySessionIdOrderByCreatedAtAsc(sessionId);
-
-        // 取最近的 N 轮（N * 2 条消息：用户 + 助手）
-        int maxMessages = MAX_HISTORY_ROUNDS * 2;
-        if (all.size() > maxMessages) {
-            all = all.subList(all.size() - maxMessages, all.size());
+        if (sessionId == null) {
+            return List.of();
         }
-        return all;
+        List<ChatMessage> questions = messageRepository.findTop10BySessionIdAndRoleOrderByIdDesc(sessionId, "USER");
+        return questions.isEmpty() ? List.of() : messageRepository
+                .findBySessionIdAndIdGreaterThanEqualOrderByIdAsc(sessionId, questions.getLast().getId());
+    }
+
+    /** 会话元问题读取完整历史；问题定位由后端处理、语言由模型组织，总结限制上下文预算。 */
+    public List<ChatMessage> getAllHistory(String sessionId) {
+        return sessionId == null ? List.of() : messageRepository.findBySessionIdOrderByIdAsc(sessionId);
+    }
+
+    /** 兼容旧调用：返回最近十轮中的 RAG 消息；新调用应按当前问题做关联记忆选择。 */
+    public List<ChatMessage> getRagHistory(String sessionId) {
+        List<ChatMessage> result = new ArrayList<>();
+        ChatMessage user = null;
+        for (ChatMessage message : getHistory(sessionId)) {
+            if ("USER".equals(message.getRole())) {
+                user = message;
+            } else if ("ASSISTANT".equals(message.getRole()) && message.getIntent() == Intent.RAG) {
+                if (user != null) {
+                    result.add(user);
+                }
+                result.add(message);
+                user = null;
+            }
+        }
+        return result;
     }
 }

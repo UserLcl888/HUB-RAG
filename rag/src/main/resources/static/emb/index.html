@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="color-scheme" content="light" />
 <!-- 排查用：view-source 搜本行即可确认线上加载的是哪一版（改页面时记得同步 +1） -->
-<meta name="emb-page-version" content="16" />
+<meta name="emb-page-version" content="17" />
 <meta name="robots" content="noindex" />
 <title>农田 AI 助手 · 智能问答</title>
 <link rel="stylesheet" href="/api/v1/speech/assets/speech-input.css" />
 <!-- 内联 SVG 图标：不引入图片资源，也避免顶层打开时 favicon 404 -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='9'%20fill='%232fbf8e'/%3E%3Ctext%20x='16'%20y='23'%20font-size='18'%20text-anchor='middle'%20fill='%23ffffff'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E" />
 <!--
+  v17 改动：统一文字意图分流，初始状态为正在理解问题，支持澄清及文档/数据混合请求。
   v16 改动：暂停 / 继续右侧增加对勾，结束整次录音并保留文字，不自动发送。
   v15 改动：语音实时回填原输入框，右侧支持暂停 / 继续，按钮悬停显示取消 / 暂停 / 继续。
   v14 改动：语音输入使用后端共享录音模块，不自动发送。
@@ -328,7 +329,7 @@
     '如何进行项目工程设计?'
   ];
 
-  var LOADING_TEXT = '正在检索知识库…';
+  var LOADING_TEXT = '正在理解问题…';
   var FALLBACK_ERROR = '问答服务暂时不可用，请稍后重试。';
   var EMPTY_ANSWER = '没有获取到回答内容，请换个问法再试一次。';
   /** 客户端兜底超时：后端 SseEmitter 是 60s，这里给 75s（覆盖"连 SSE 响应头都没回来的卡死"） */

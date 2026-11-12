@@ -21,21 +21,20 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 问答答案的 Redis 缓存（默认 7 天）。
+ * 仅首页热门问题的 Redis 答案缓存（默认 7 天），普通问题和带历史的回答不参与。
  *
  * <p>为什么需要：首页那几个预设热门问题（建设规划布局要做到什么程度 / 施工组织设计怎么做 /
  * 什么是田块整治工程 / 如何进行项目工程设计）每次点击都要走一遍
- * 向量检索 → 精排 → 大模型生成，既慢又费额度；而这些问题的答案是确定的，
- * 缓存后点击基本秒回。
+ * 向量检索 → 精排 → 大模型生成，既慢又费额度；相同资料范围下的独立提问可复用答案。
  *
  * <p>key 设计：
  * <pre>
- *   hbnt:answer:v1:g{代}:{kbIds}:{docId|all}:{sha256(规范化问题)}
+ *   hbnt:answer:v2:hot:g{代}:{kbIds}:{docId|all}:{sha256(规范化问题)}
  * </pre>
  * <ul>
  *   <li>{@code g{代}}：全局缓存代。文档重新解析 / 删除资料时 {@link #invalidate()} 让代 +1，
  *       旧 key 自然失效（无需扫描删除），避免"资料换了、答案还是旧的"。</li>
- *   <li>{@code kbIds / docId} 进 key：同一句话在不同检索范围下答案可能不同，必须分开存。</li>
+ *   <li>{@code kbIds} 进 key：不同知识库分开存；当前只允许全库范围，指定文档不参与。</li>
  *   <li>问题取 sha256 前 32 位：key 长度可控，且不受问题里标点/空格的影响。</li>
  * </ul>
  *
@@ -46,11 +45,13 @@ import java.util.Optional;
 @Slf4j
 public class AnswerCacheService {
 
-    private static final String KEY_PREFIX = "hbnt:answer:v1:";
+    // 切换命名空间后，旧版普通问答缓存不再读取；原 key 按已有 TTL 自然过期。
+    private static final String KEY_PREFIX = "hbnt:answer:v2:hot:";
     private static final String GENERATION_KEY = "hbnt:answer:gen";
 
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
+    private final HotQuestionCatalog hotQuestions;
 
     /** 答案缓存有效期（默认 7 天） */
     @Value("${rag.cache.answer-ttl:7d}")
@@ -84,19 +85,31 @@ public class AnswerCacheService {
 
     /** 生成缓存 key */
     public String buildKey(List<Long> kbIds, Long docId, String question) {
-        String scope = (kbIds == null || kbIds.isEmpty()) ? "none" : kbIds.toString();
+        if (!hotQuestions.contains(question) || docId != null || kbIds == null || kbIds.isEmpty()
+                || kbIds.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new IllegalArgumentException("仅支持有效知识库范围内的首页热门问题答案缓存");
+        }
+        String scope = kbIds.stream().distinct().sorted().toList().toString();
         return KEY_PREFIX + "g" + generation() + ":" + scope + ":"
                 + (docId == null ? "all" : docId) + ":" + sha256(normalize(question));
     }
 
     /** 读缓存；Redis 异常或内容损坏都当"未命中" */
     public Optional<CachedAnswer> get(String key) {
+        if (key == null || !key.startsWith(KEY_PREFIX)) {
+            return Optional.empty();
+        }
         try {
             String json = redis.opsForValue().get(key);
             if (json == null || json.isBlank()) {
                 return Optional.empty();
             }
-            return Optional.of(objectMapper.readValue(json, CachedAnswer.class));
+            CachedAnswer cached = objectMapper.readValue(json, CachedAnswer.class);
+            if (cached == null || !hotQuestions.contains(cached.getQuestion())
+                    || cached.getAnswer() == null || cached.getAnswer().isBlank()) {
+                return Optional.empty();
+            }
+            return Optional.of(cached);
         } catch (Exception e) {
             log.warn("[AnswerCache] 读取失败，按未命中处理：{}", e.getMessage());
             return Optional.empty();
@@ -105,6 +118,10 @@ public class AnswerCacheService {
 
     /** 写缓存（带 TTL）；失败只记日志 */
     public void put(String key, CachedAnswer value) {
+        if (key == null || !key.startsWith(KEY_PREFIX) || value == null
+                || !hotQuestions.contains(value.getQuestion())) {
+            throw new IllegalArgumentException("禁止缓存非热门问题的最终答案");
+        }
         try {
             redis.opsForValue().set(key, objectMapper.writeValueAsString(value), answerTtl);
             log.info("[AnswerCache] 已缓存答案：key={}，TTL={}，字数={}",

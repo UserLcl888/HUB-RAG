@@ -1,5 +1,7 @@
 package edu.lcl.rag.entity;
 
+import edu.lcl.rag.assistant.Intent;
+import edu.lcl.rag.assistant.ConversationState;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
@@ -25,6 +27,14 @@ public class ChatMessage {
 
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 32)
+    private Intent intent;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "conversation_state", columnDefinition = "jsonb")
+    private ConversationState conversationState;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")

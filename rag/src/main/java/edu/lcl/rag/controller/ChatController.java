@@ -1,18 +1,19 @@
 package edu.lcl.rag.controller;
 
+import edu.lcl.rag.assistant.AssistantDispatchService;
+import edu.lcl.rag.assistant.BusinessQueryHandler;
+import edu.lcl.rag.assistant.BusinessQueryTool;
 import edu.lcl.rag.dto.ApiResponse;
 import edu.lcl.rag.dto.ChatRequest;
 import edu.lcl.rag.dto.ChatSessionVO;
 import edu.lcl.rag.dto.RagResponse;
 import edu.lcl.rag.entity.ChatMessage;
 import edu.lcl.rag.entity.ChatSession;
-import edu.lcl.rag.entity.KbDocument;
 import edu.lcl.rag.repository.ChatMessageRepository;
 import edu.lcl.rag.repository.ChatSessionRepository;
 import edu.lcl.rag.service.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import jakarta.annotation.PreDestroy;
 
 @RestController
 @RequestMapping("/api/v1/chat")
@@ -37,30 +39,17 @@ public class ChatController {
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
     private final AnswerCacheService answerCache;
-
-    /** 首页热门问题的默认预热清单（与前端 hotQuestions 保持一致） */
-    private static final List<String> DEFAULT_WARM_QUESTIONS = List.of(
-            "建设规划布局要做到什么程度?",
-            "施工组织设计怎么做?",
-            "什么是田块整治工程？",
-            "如何进行项目工程设计?");
-
-    /**
-     * 会话是否必须绑定单个文档。
-     * false（默认）：docId 为空表示"检索整个知识库"，答案来源可以是库里的多份文档。
-     */
-    @Value("${rag.chat.require-document-scope:false}")
-    private boolean requireDocumentScopeEnabled;
+    private final AssistantDispatchService assistant;
+    private final BusinessQueryHandler businessQueries;
+    private final HotQuestionCatalog hotQuestions;
 
     // 专用线程池处理 SSE 推送（避免占用 Tomcat 线程池）
-    private final ExecutorService sseExecutor = Executors.newCachedThreadPool(
-            r -> {
-                Thread t = new Thread(r);
-                t.setName("sse-rag-" + t.getId());
-                t.setDaemon(true);
-                return t;
-            }
-    );
+    private final ExecutorService sseExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
+    @PreDestroy
+    public void shutdown() {
+        sseExecutor.shutdownNow();
+    }
 
     /**
      * 流式问答接口（SSE）。
@@ -70,27 +59,20 @@ public class ChatController {
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamChat(
             @RequestParam String question,
-            @RequestParam List<Long> kbIds,
+            @RequestParam(required = false) List<Long> kbIds,
             @RequestParam(required = false) Long docId,
             @RequestParam(required = false) String sessionId) {
 
-        if (sessionId == null || sessionId.isBlank()) {
-            validateScope(kbIds, docId);
-        }
-        // 创建或获取会话
-        String sid = sessionService.getOrCreateSession(sessionId, kbIds, docId);
-        ChatSessionService.RetrievalScope scope = sessionService.resolveRetrievalScope(sid, kbIds, docId);
-        if (requireDocumentScopeEnabled) {
-            requireDocumentScope(scope);
-        }
-        validateScope(scope.kbIds(), scope.docId());
+        String text = validateQuestion(question);
+        // 分类前只检查文字和会话。首次非 RAG 访问不能绑定请求附带的文档范围。
+        String sid = sessionService.getOrCreateSession(sessionId, List.of(), null);
 
         SseEmitter emitter = new SseEmitter(60_000L);  // 60秒超时
 
         sseExecutor.submit(() -> {
             try {
                 emitter.send(SseEmitter.event().name("session").data(sid));
-                streamingRagService.streamQuery(question, scope.kbIds(), scope.docId(), sid, emitter);
+                assistant.stream(text, kbIds, docId, sid, emitter);
             } catch (Exception e) {
                 // 客户端已断开时 emitter 已结束：只记 DEBUG，避免 "ResponseBodyEmitter has already completed"
                 // 与写流失败继续升级成 ERROR 堆栈
@@ -131,22 +113,42 @@ public class ChatController {
      */
     @PostMapping
     public RagResponse syncChat(@RequestBody ChatRequest request) {
-        String sid = sessionService.getOrCreateSession(
-                request.getSessionId(), request.getKbIds(), request.getDocId());
-        ChatSessionService.RetrievalScope scope = sessionService.resolveRetrievalScope(
-                sid, request.getKbIds(), request.getDocId());
-        if (requireDocumentScopeEnabled) {
-            requireDocumentScope(scope);
+        if (request == null) {
+            throw new IllegalArgumentException("问题不能为空");
         }
-        validateScope(scope.kbIds(), scope.docId());
-        return streamingRagService.syncQuery(request.getQuestion(), scope.kbIds(), scope.docId(), sid);
+        String text = validateQuestion(request.getQuestion());
+        String sid = sessionService.getOrCreateSession(
+                request.getSessionId(), List.of(), null);
+        return assistant.sync(text, request.getKbIds(), request.getDocId(), sid);
+    }
+
+    /** 查询功能说明目录；只展示后端登记的功能，不开放用户动态注册或任意 URL 调用。 */
+    @GetMapping("/capabilities")
+    public ApiResponse<List<BusinessQueryTool.Definition>> capabilities() {
+        return ApiResponse.ok(businessQueries.definitions());
+    }
+
+    /** 前端从这里读取首页名单，与预热及答案缓存白名单保持一致。 */
+    @GetMapping("/hot-questions")
+    public ApiResponse<List<String>> hotQuestions() {
+        return ApiResponse.ok(hotQuestions.questions());
+    }
+
+    private String validateQuestion(String question) {
+        if (question == null || question.isBlank()) {
+            throw new IllegalArgumentException("问题不能为空");
+        }
+        if (question.length() > 2000) {
+            throw new IllegalArgumentException("问题过长，请控制在 2000 字以内");
+        }
+        return question.strip();
     }
 
     /**
      * 预热答案缓存：把预设热门问题各生成一次并写入 Redis（默认 7 天）。
      * <p>
      * 用法：<code>POST /api/v1/chat/cache/warm?kbId=1</code>，
-     * 也可以在 body 里给 {"questions":["...","..."]} 指定问题。
+     * body 可用 {"questions":["...","..."]} 指定热门名单的子集，不接受名单外的问题。
      * 预热**不写会话记录**（persist=false），避免历史对话里多出一堆空会话。
      */
     @PostMapping("/cache/warm")
@@ -157,7 +159,11 @@ public class ChatController {
             throw new IllegalArgumentException("还没有知识库，无法预热");
         }
         List<String> questions = (request != null && request.questions() != null && !request.questions().isEmpty())
-                ? request.questions() : DEFAULT_WARM_QUESTIONS;
+                ? request.questions() : hotQuestions.questions();
+        if (questions.stream().anyMatch(question -> !hotQuestions.contains(question))) {
+            throw new IllegalArgumentException("只能预热首页热门问题名单中的问题");
+        }
+        questions = questions.stream().distinct().toList();
 
         List<WarmResult> results = new ArrayList<>();
         for (String question : questions) {
@@ -201,7 +207,7 @@ public class ChatController {
                 .map(List::of).orElse(List.of());
     }
 
-    /** 预热请求体：不传则用默认的 4 个热门问题 */
+    /** 预热请求体：不传则用当前配置的全部热门问题。 */
     public record WarmRequest(List<String> questions) {}
 
     /** 单个问题的预热结果 */
@@ -225,7 +231,7 @@ public class ChatController {
                 .filter(session -> !Boolean.TRUE.equals(session.getIsDeleted()))
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在：" + sessionId));
         return ApiResponse.ok(
-                messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
+                messageRepository.findBySessionIdOrderByIdAsc(sessionId));
     }
 
     /**
@@ -251,33 +257,6 @@ public class ChatController {
 
     /** 重命名请求体 */
     public record RenameRequest(String title) {}
-
-    private void validateScope(List<Long> kbIds, Long docId) {
-        kbService.requireKnowledgeBases(kbIds);
-        if (docId != null) {
-            KbDocument doc = requireDocumentInScope(kbIds, docId);
-            if (doc.getStatus() != edu.lcl.rag.entity.KbDocument.DocumentStatus.DONE) {
-                throw new IllegalArgumentException("当前会话文档不可用，请重新新建会话并选择已解析文档");
-            }
-        }
-    }
-
-    private void requireDocumentScope(ChatSessionService.RetrievalScope scope) {
-        if (scope.docId() == null) {
-            throw new IllegalArgumentException("当前会话文档不可用，请重新新建会话并选择已解析文档");
-        }
-    }
-
-    private KbDocument requireDocumentInScope(List<Long> kbIds, Long docId) {
-        for (Long kbId : kbIds) {
-            try {
-                return kbService.requireDocument(kbId, docId);
-            } catch (IllegalArgumentException ignored) {
-                // 继续检查同一会话固定的其他知识库。
-            }
-        }
-        throw new IllegalArgumentException("当前会话文档不可用，请重新新建会话并选择已解析文档");
-    }
 
     private ChatSessionVO toSessionVO(ChatSession session) {
         return ChatSessionVO.builder()

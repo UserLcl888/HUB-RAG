@@ -219,6 +219,8 @@ CREATE TABLE kb_chat_message
     session_id  VARCHAR(36) NOT NULL,
     role        VARCHAR(20) NOT NULL,           -- USER / ASSISTANT
     content     TEXT        NOT NULL,
+    intent      VARCHAR(32),                    -- 助手回答：RAG / BUSINESS_QUERY / OTHER；用户消息留空
+    conversation_state JSONB,                  -- 后端确定的查询、已知条件与待补参数；不依赖回答措辞
     sources JSONB,                              -- 引用来源列表（仅 ASSISTANT 消息有）
     token_count INT                  DEFAULT 0, -- 消耗的 Token 数
     latency_ms  INT                  DEFAULT 0, -- 生成耗时（毫秒）

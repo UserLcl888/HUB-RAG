@@ -53,7 +53,7 @@ spring:
       chat:
         options:
           model: ${CHAT_MODEL:qwen-plus}
-          temperature: 0.1
+          temperature: 0.3
           max-tokens: 4096
       embedding:
         base-url: ${DASHSCOPE_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
@@ -84,6 +84,11 @@ rag:
   chat:
     require-document-scope: false
     auto-bind-document: false
+    hot-questions:
+      - "建设规划布局要做到什么程度?"
+      - "施工组织设计怎么做?"
+      - "什么是田块整治工程？"
+      - "如何进行项目工程设计?"
   chunk:
     max-child-characters: 1200
     max-parent-characters: 3000

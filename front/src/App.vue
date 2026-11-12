@@ -8,7 +8,7 @@ import SourceCards from './components/SourceCards.vue'
 import VoiceInput from './components/VoiceInput.vue'
 import {
   chatStreamUrl, createKnowledgeBase, deleteChatSession, deleteDocument, downloadDocument,
-  getChatMessages, getDocumentStatus, listChatSessions,
+  getChatMessages, getDocumentStatus, listChatSessions, listHotQuestions,
   listDocuments, listKnowledgeBases, renameChatSession, startDocumentParsing, uploadDocument,
   type ChatMessage as SavedChatMessage,
   type ChatSession as SavedChatSession,
@@ -96,6 +96,14 @@ const activeKnowledgeBaseId = computed(() => selectedDocument.value?.kbId
   ?? defaultKnowledgeBase.value?.id
   ?? ragKnowledgeBaseId.value)
 const activeKnowledgeBaseName = computed(() => defaultKnowledgeBase.value?.name ?? '')
+const currentSessionTitle = computed(() => {
+  const session = chatSessionId.value ? findSession(chatSessionId.value) : null
+  if (session?.title?.trim()) return session.title.trim()
+  const firstQuestion = chatMessages.value.find(message => message.role === 'user')?.text?.trim()
+  if (firstQuestion) return firstQuestion
+  if (selectedDocument.value) return selectedDocument.value.fileName
+  return activeKnowledgeBaseName.value || '新建会话'
+})
 /** 只有"会话确实绑了文档、但那份文档已不可用"才算异常；整库会话不算 */
 const sessionDocumentUnavailable = computed(() => Boolean(
   chatSessionId.value && sessionDocId.value !== null && !selectedDocument.value,
@@ -453,6 +461,7 @@ onMounted(() => {
   restoreWhiteMode()
   void loadRagDocuments()
   void loadChatSessions()
+  void loadHotQuestions()
 })
 
 function handlePageKeydown(event: KeyboardEvent) {
@@ -493,15 +502,19 @@ function navigate(path: string) {
 }
 
 /**
- * 首页中部的"大家都在问"与"热门标签"：**写死的展示内容**。
- * 点击直接发起提问：问题写进输入框并立即发送，回答来自默认知识库。
+ * 首页热门问题从后端读取，与答案缓存及预热共用同一份名单。
+ * 标签仅用于展示和筛选，不参与答案缓存。
  */
-const hotQuestions = [
-  '建设规划布局要做到什么程度?',
-  '施工组织设计怎么做?',
-  '什么是田块整治工程？',
-  '如何进行项目工程设计?',
-]
+const hotQuestions = ref<string[]>([])
+
+async function loadHotQuestions() {
+  try {
+    hotQuestions.value = await listHotQuestions()
+  } catch (error) {
+    hotQuestions.value = []
+    notify(error instanceof Error ? error.message : '热门问题加载失败')
+  }
+}
 const hotTags = [
   '高标准农田', '农田建设', '质量验收', '设计参考', '项目管理', '技术标准', '政策文件',
 ]
@@ -509,7 +522,7 @@ const activeHotQuestion = ref<string | null>(null)
 
 /**
  * 点击热门问题：**直接发起提问**（进对话页，不再只是高亮）。
- * 这 4 个问题在后端预热过答案缓存（Redis，7 天），命中时基本秒回；
+ * 独立首轮提问可读取热门答案缓存；已有历史、指定文件或追问时正常检索生成；
  * 对话照常落库，历史里能看到这次问答。
  */
 async function askHotQuestion(item: string) {
@@ -573,7 +586,7 @@ function restoreWhiteMode() {
 async function startDefaultChat() {
   await startNewChat(null)
   if (backendEnabled.value && !defaultKnowledgeBase.value) {
-    notify('知识库里还没有资料，请先上传并解析文档')
+    notify('暂未配置知识库，仍可闲聊或提出业务查询；文档问答需先上传并解析资料')
   }
 }
 async function startNewChat(document: RagDocument | null) {
@@ -635,16 +648,6 @@ function ask() {
   if (!text || asking.value || loadingHistory.value || speechBusy.value) return
   const document = selectedDocument.value
   const kbId = activeKnowledgeBaseId.value
-  if (!backendEnabled.value || kbId === null) {
-    notify(backendEnabled.value
-      ? '知识库里还没有已解析的资料，请先上传并解析文档'
-      : '后端未连接，暂时无法提问')
-    return
-  }
-  if (sessionDocumentUnavailable.value) {
-    notify('当前会话绑定的文档已不可用，请新建会话')
-    return
-  }
   const session = chatSession.value
   voiceInput.value?.commit()
   chatMessages.value.push({ role: 'user', text })
@@ -652,11 +655,11 @@ function ask() {
   scrollToLatestMessage()
   asking.value = true
   const answerIndex = chatMessages.value.push({
-    role: 'assistant', text: '正在检索知识库…', streaming: true,
+    role: 'assistant', text: '正在理解问题…', streaming: true,
   }) - 1
   // docId 为空 = 检索整个知识库，答案来源可以同时来自库里多份文档
   const eventSource = new EventSource(chatStreamUrl(
-    text, [kbId], chatSessionId.value, document?.id ?? null,
+    text, kbId === null ? [] : [kbId], chatSessionId.value, document?.id ?? null,
   ))
   activeStream = eventSource
   let receivedToken = false
@@ -665,8 +668,19 @@ function ask() {
     if (session === chatSession.value) {
       const sessionId = (event as MessageEvent).data as string
       chatSessionId.value = sessionId
-      sessionDocId.value = document?.id ?? null
-      if (document) saveChatDocumentId(sessionId, document.id)
+    }
+  })
+  // 只有后端确定进入 RAG 并验证成功，才把页面选择视为本会话已绑定的范围。
+  eventSource.addEventListener('scope', event => {
+    if (session !== chatSession.value) return
+    try {
+      const scope = JSON.parse((event as MessageEvent).data) as { kbIds: number[]; docId: number | null }
+      sessionDocId.value = typeof scope.docId === 'number' ? scope.docId : null
+      if (chatSessionId.value && sessionDocId.value !== null) {
+        saveChatDocumentId(chatSessionId.value, sessionDocId.value)
+      }
+    } catch {
+      // 范围仅由服务端确认，不用无效事件覆盖已有选择。
     }
   })
   eventSource.addEventListener('status', event => {
@@ -690,20 +704,18 @@ function ask() {
     pumpTypewriter()
   })
   eventSource.addEventListener('error', event => {
+    let errorMessage = '问答服务暂时不可用，请稍后重试。'
     if (event instanceof MessageEvent) {
       try {
         const payload = JSON.parse(event.data) as { message?: string }
-        if (payload.message && session === chatSession.value) {
-          chatMessages.value[answerIndex].text = payload.message
-        }
+        if (payload.message) errorMessage = payload.message
       } catch {
         // 后端断开时显示统一错误信息
       }
     }
     if (session === chatSession.value) {
-      if (!receivedToken && chatMessages.value[answerIndex].text !== '问答服务暂时不可用，请稍后重试。') {
-        chatMessages.value[answerIndex].text = '问答服务暂时不可用，请稍后重试。'
-      }
+      chatMessages.value[answerIndex].text = receivedToken
+        ? `${cleanCitationMarkers(rawAnswer)}\n\n（回答中断：${errorMessage}）` : errorMessage
       // 清掉待揭示文本，否则打字机可能把错误提示覆盖掉
       chatMessages.value[answerIndex].rawText = undefined
       chatMessages.value[answerIndex].answerDone = true
@@ -952,7 +964,7 @@ async function askAboutFile(file: PolicyFile) {
             </section>
           </div>
           <div v-else class="conversation-thread">
-            <div class="thread-title"><span class="live-dot"></span>当前对话 <span v-if="selectedDocument" :title="selectedDocument.fileName">· 《{{ selectedDocument.fileName }}》</span><span v-else-if="sessionDocumentUnavailable">· 当前会话文档不可用，请重新新建会话并选择已解析文档</span><span v-else>· 检索范围：《{{ activeKnowledgeBaseName || '知识库' }}》全部资料</span></div>
+            <div class="thread-title"><span class="live-dot"></span><span :title="currentSessionTitle">· {{ currentSessionTitle }}</span></div>
             <div v-if="selectedDocument" class="conversation-message assistant">
               <span class="conversation-avatar"><Sparkles :size="17" /></span>
               <div class="conversation-content">
@@ -975,12 +987,12 @@ async function askAboutFile(file: PolicyFile) {
         <div class="composer-wrap">
           <div class="chat-composer">
             <label class="sr-only" for="chat-question">向农田 AI 助手提问</label>
-            <textarea id="chat-question" ref="questionInput" v-model="question" rows="2" :disabled="!activeKnowledgeBaseId || loadingHistory" :placeholder="selectedDocument ? `向《${selectedDocument.fileName}》提问 · Enter 发送` : sessionDocumentUnavailable ? '当前会话文档不可用，请新建会话' : activeKnowledgeBaseId ? '向高标准农田建设智能AI助手提问 · Enter 发送' : '请先上传并解析文档'" @keydown="handleChatKeydown"></textarea>
+            <textarea id="chat-question" ref="questionInput" v-model="question" rows="2" :disabled="loadingHistory" :placeholder="selectedDocument ? `向《${selectedDocument.fileName}》提问 · Enter 发送` : sessionDocumentUnavailable ? '文档不可用，仍可闲聊或提出业务查询 · Enter 发送' : '请输入文档问题、业务查询或其他问题 · Enter 发送'" @keydown="handleChatKeydown"></textarea>
             <div class="composer-footer">
               <span><ShieldCheck :size="14" />AI 生成内容仅供参考，实际业务请以文件为准</span>
               <div class="composer-actions">
                 <VoiceInput ref="voiceInput" v-model="question" :input="questionInput" :disabled="asking || loadingHistory" @busy="speechBusy = $event" @notice="notify" />
-                <button :disabled="!activeKnowledgeBaseId || !question.trim() || asking || loadingHistory || speechBusy" @click="ask()">发送<ArrowUp :size="16" /></button>
+                <button :disabled="!question.trim() || asking || loadingHistory || speechBusy" @click="ask()">发送<ArrowUp :size="16" /></button>
               </div>
             </div>
           </div>
