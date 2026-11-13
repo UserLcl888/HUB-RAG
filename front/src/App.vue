@@ -81,6 +81,7 @@ const voiceInput = ref<InstanceType<typeof VoiceInput> | null>(null)
 const parsingRequests = ref(new Set<number>())
 let activeStream: EventSource | null = null
 let typewriterFrame = 0
+let typewriterLastTime = 0
 let statusTimer: number | undefined
 let toastTimer: number | undefined
 
@@ -502,8 +503,8 @@ function navigate(path: string) {
 }
 
 /**
- * 首页热门问题从后端读取，与答案缓存及预热共用同一份名单。
- * 标签仅用于展示和筛选，不参与答案缓存。
+ * 首页热门问题从后端读取：业务快捷问题优先，后接资料问题。
+ * 缓存及预热白名单在后端单独限定为资料问题，业务问题点击后正常查询。
  */
 const hotQuestions = ref<string[]>([])
 
@@ -515,14 +516,11 @@ async function loadHotQuestions() {
     notify(error instanceof Error ? error.message : '热门问题加载失败')
   }
 }
-const hotTags = [
-  '高标准农田', '农田建设', '质量验收', '设计参考', '项目管理', '技术标准', '政策文件',
-]
 const activeHotQuestion = ref<string | null>(null)
 
 /**
  * 点击热门问题：**直接发起提问**（进对话页，不再只是高亮）。
- * 独立首轮提问可读取热门答案缓存；已有历史、指定文件或追问时正常检索生成；
+ * 业务问题始终正常分流查询；只有独立首轮的热门资料问题才可读取资料答案缓存；
  * 对话照常落库，历史里能看到这次问答。
  */
 async function askHotQuestion(item: string) {
@@ -593,6 +591,9 @@ async function startNewChat(document: RagDocument | null) {
   voiceInput.value?.cancel()
   activeStream?.close()
   activeStream = null
+  if (typewriterFrame) cancelAnimationFrame(typewriterFrame)
+  typewriterFrame = 0
+  typewriterLastTime = 0
   asking.value = false
   chatSessionId.value = null
   sessionDocId.value = null
@@ -613,13 +614,23 @@ async function scrollToLatestMessage(behavior: ScrollBehavior = 'smooth') {
 
 /**
  * 打字机揭示：SSE 的 token 是成批到达的，直接塞进 text 会一坨一坨地往外蹦，看着很死。
- * 这里按帧从 rawText 里揭示字符——积压越多揭示越快（自适应追赶），
+ * 按经过时间逐步揭示，速度设上限，避免长答案一次到达时首帧蹦出几十个字。
  * 文本全部揭示且服务端已结束时，才把 streaming 置 false 切到结构化渲染。
  */
 function pumpTypewriter() {
   if (typewriterFrame) return
-  const tick = () => {
+  typewriterLastTime = performance.now()
+  const tick = (now: number) => {
     typewriterFrame = 0
+    const elapsed = Math.min(80, Math.max(0, now - typewriterLastTime))
+    // 小于一个字的时间先积累；不随屏幕刷新率改变速度。
+    const steps = Math.floor(elapsed / 16)
+    if (steps === 0) {
+      typewriterFrame = requestAnimationFrame(tick)
+      return
+    }
+    typewriterLastTime += steps * 16
+    if (now - typewriterLastTime > 80) typewriterLastTime = now
     let revealing = false
     for (const message of chatMessages.value) {
       if (message.role !== 'assistant' || message.rawText === undefined) continue
@@ -627,16 +638,21 @@ function pumpTypewriter() {
       let shown = Math.min(message.shown ?? 0, target.length)
       if (shown < target.length) {
         const backlog = target.length - shown
-        shown = Math.min(target.length, shown + Math.max(1, Math.ceil(backlog / 18)))
-        revealing = true
+        const charsPerStep = backlog > 1200 ? 4 : backlog > 400 ? 2 : 1
+        shown = Math.min(target.length, shown + charsPerStep * steps)
       }
       message.shown = shown
       message.text = target.slice(0, shown)
       // 揭示完毕 + 服务端已结束 → 收尾（此时才切成结构化渲染，光标/呼吸动画随之停止）
-      if (!revealing && message.answerDone) message.streaming = false
+      const pending = shown < target.length
+      revealing ||= pending
+      if (!pending && message.answerDone) {
+        message.streaming = false
+        message.rawText = undefined
+      }
     }
+    void scrollToLatestMessage('auto')
     if (revealing) {
-      void scrollToLatestMessage('auto')
       typewriterFrame = requestAnimationFrame(tick)
     }
   }
@@ -934,7 +950,7 @@ async function askAboutFile(file: PolicyFile) {
             <div class="welcome-kicker">农田 AI 助手 · 智能问答</div>
             <h1>从一个问题开始，<span>找到建设的依据。</span></h1>
             <p>围绕农田建设、项目管理和政策规范，为你梳理清晰的思路。</p>
-            <section class="home-prompts" aria-label="热门问题与热门标签">
+            <section class="home-prompts" aria-label="热门问题">
               <div class="home-prompts-title"><Sparkles :size="15" />大家都在问<em>· 点击直接提问</em></div>
               <div class="home-hot-grid">
                 <button
@@ -950,16 +966,6 @@ async function askAboutFile(file: PolicyFile) {
                   <span class="home-hot-text">{{ item }}</span>
                   <ArrowRight :size="15" aria-hidden="true" />
                 </button>
-              </div>
-              <div class="home-tags">
-                <span class="home-tags-label">热门标签</span>
-                <!-- 只做悬停 / 按下时的颜色反馈：不保留选中态，鼠标移开即复原 -->
-                <button
-                  v-for="tag in hotTags"
-                  :key="tag"
-                  type="button"
-                  class="home-tag"
-                >{{ tag }}</button>
               </div>
             </section>
           </div>

@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="color-scheme" content="light" />
 <!-- 排查用：view-source 搜本行即可确认线上加载的是哪一版（改页面时记得同步 +1） -->
-<meta name="emb-page-version" content="17" />
+<meta name="emb-page-version" content="18" />
 <meta name="robots" content="noindex" />
 <title>农田 AI 助手 · 智能问答</title>
 <link rel="stylesheet" href="/api/v1/speech/assets/speech-input.css" />
 <!-- 内联 SVG 图标：不引入图片资源，也避免顶层打开时 favicon 404 -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='9'%20fill='%232fbf8e'/%3E%3Ctext%20x='16'%20y='23'%20font-size='18'%20text-anchor='middle'%20fill='%23ffffff'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E" />
 <!--
+  v18 改动：热门问题与首页共用后端清单，业务问题位于第一行；小窗口完整换行展示。
   v17 改动：统一文字意图分流，初始状态为正在理解问题，支持澄清及文档/数据混合请求。
   v16 改动：暂停 / 继续右侧增加对勾，结束整次录音并保留文字，不自动发送。
   v15 改动：语音实时回填原输入框，右侧支持暂停 / 继续，按钮悬停显示取消 / 暂停 / 继续。
@@ -75,9 +76,10 @@
     历史会话列表、文件管理、iframe 嵌入代码都不在页面内；悬浮窗外观与开关由外层负责。
   · 页面无构建、无第三方依赖、无图片资源；语音模块从后端同源加载，问答接口与主站完全一致：
       GET /api/v1/kb                       取检索范围（与首页同一个默认知识库）
+      GET /api/v1/chat/hot-questions       取首页共用的热门问题，业务问题在前
       GET /api/v1/chat/stream?question=&kbIds=&sessionId=   SSE 流式问答
-  · 热门问题与首页一致，答案已被预热进 Redis 答案缓存（同一 kbIds + docId 为空才命中），
-    点一下基本秒回。会话 ID 在同一次页面访问内复用，多轮追问共享上下文。
+  · 热门问题点击后统一走正常问答接口；业务问题不参与 Redis 答案缓存或预热，
+    只有资料问题满足后端条件时才可能命中答案缓存。会话 ID 在同一次页面访问内复用，多轮追问共享上下文。
   · 回答渲染方式与主站一致：移植 front/src/utils/markdown.ts + MessageBody.vue 的解析/渲染，
     流式期间按帧揭示字符（打字机），全部文本走 textContent，不使用 innerHTML。
   · 来源只展示文本信息（文件名 / 页码 / 章节，摘要放 title 悬浮提示），不处理图片、图标、OCR 图形。
@@ -140,22 +142,27 @@
   .emb-body::-webkit-scrollbar-track { background: transparent; }
 
   /* ── 热门问题 ───────────────────────────────────────────── */
-  .hot-title { color: var(--emb-muted); font-size: 11px; letter-spacing: .06em; margin-bottom: 9px; }
-  /* 两列等宽网格：恒定「上 2 下 2」且左侧对齐，
-     不会因为窗口变窄、问题长短不一而出现 2/1/1 这种参差换行 */
-  .hot-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .hot { padding: 4px 0 12px; }
+  .hot-title { color: #748498; font-size: 12px; letter-spacing: .04em; margin-bottom: 11px; }
+  /* 两列三行，第一行为业务问题；同一行等高，长问题完整换行而非截断。 */
+  .hot-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
   /* 极窄窗口（<240px）才退成一列，否则每个药丸只剩几个字 */
   @media (max-width: 240px) { .hot-list { grid-template-columns: 1fr; } }
   .hot-item {
-    display: block; width: 100%; max-width: 100%; padding: 7px 14px; margin: 0;
-    border: 1px solid transparent; border-radius: 999px;
+    display: flex; align-items: center; width: 100%; min-width: 0; min-height: 48px;
+    max-width: 100%; padding: 10px 13px; margin: 0;
+    border: 1px solid transparent; border-radius: 14px;
     background: var(--emb-chip-bg); color: var(--emb-chip-text);
-    font-size: 12px; line-height: 1.45; text-align: left; cursor: pointer;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    transition: background .16s, color .16s;
+    font-size: 12px; line-height: 1.65; text-align: left; cursor: pointer;
+    white-space: normal; overflow-wrap: anywhere;
+    transition: background .16s, color .16s, border-color .16s;
   }
-  .hot-item:hover:not(:disabled) { background: var(--emb-chip-bg-hover); color: var(--emb-chip-text-hover); }
+  .hot-item:hover:not(:disabled) { background: var(--emb-chip-bg-hover); color: var(--emb-chip-text-hover); border-color: #c8daf6; }
+  .hot-item-text { width: 100%; min-width: 0; text-wrap: balance; }
+  .hot-item:focus-visible, .hot-retry:focus-visible { outline: 2px solid var(--emb-accent); outline-offset: 2px; }
   .hot-item:disabled { opacity: .55; cursor: not-allowed; }
+  .hot-status { margin: 0; color: var(--emb-muted); font-size: 12px; }
+  .hot-retry { margin-top: 8px; padding: 5px 10px; border: 1px solid #d6e3f4; border-radius: 8px; background: #f5f8fe; color: var(--emb-chip-text); cursor: pointer; }
 
   /* ── 问答区（结构/取值对齐主站 .conversation-message，小窗口下略收紧） ── */
   .thread { padding-bottom: 4px; }
@@ -284,6 +291,8 @@
       <!-- 热门问题：回答区出现后即被覆盖 -->
       <section class="hot" id="embHot" aria-label="热门问题">
         <div class="hot-title">热门问题</div>
+        <p class="hot-status" id="embHotStatus" role="status">正在加载热门问题…</p>
+        <button class="hot-retry" id="embHotRetry" type="button" hidden>重新加载</button>
         <div class="hot-list" id="embHotList"></div>
       </section>
       <!-- 回答区域（含用户问题、流式回答、参考来源） -->
@@ -321,13 +330,8 @@
    */
   var DEFAULT_KB_ID = 2;
 
-  /** 热门问题：与首页 / 后端预热清单完全一致（多一个空格都会另算一条缓存） */
-  var HOT_QUESTIONS = [
-    '建设规划布局要做到什么程度?',
-    '施工组织设计怎么做?',
-    '什么是田块整治工程？',
-    '如何进行项目工程设计?'
-  ];
+  /** 首页共用的展示清单从后端读取，不在嵌入页维护另一份写死的问题。 */
+  var hotQuestions = [];
 
   var LOADING_TEXT = '正在理解问题…';
   var FALLBACK_ERROR = '问答服务暂时不可用，请稍后重试。';
@@ -741,6 +745,8 @@
   var bodyEl = document.getElementById('embBody');
   var hotEl = document.getElementById('embHot');
   var hotListEl = document.getElementById('embHotList');
+  var hotStatusEl = document.getElementById('embHotStatus');
+  var hotRetryEl = document.getElementById('embHotRetry');
   var threadEl = document.getElementById('embThread');
   var formEl = document.getElementById('embComposer');
   var inputEl = document.getElementById('embInput');
@@ -760,6 +766,7 @@
   };
 
   var frameId = 0;
+  var typewriterLastTime = 0;
   /** 最近一次 rAF 回调时间：用来判断打字机是否真的在跑（宿主隐藏 iframe 时 rAF 会停） */
   var lastFrameAt = 0;
   /** 是否跟随最新内容自动滚动：用户往上翻看时不要把他拽回底部 */
@@ -791,8 +798,6 @@
   function setAsking(value) {
     state.asking = value;
     updateSendState();
-    var hotButtons = hotListEl.querySelectorAll('.hot-item');
-    for (var i = 0; i < hotButtons.length; i++) hotButtons[i].disabled = value;
   }
 
   function resizeInput() {
@@ -803,9 +808,10 @@
 
   function renderHotQuestions() {
     hotListEl.textContent = '';
-    for (var i = 0; i < HOT_QUESTIONS.length; i++) {
+    for (var i = 0; i < hotQuestions.length; i++) {
       (function (question) {
-        var button = el('button', 'hot-item', question);
+        var button = el('button', 'hot-item');
+        button.appendChild(el('span', 'hot-item-text', question));
         button.type = 'button';
         button.title = question;
         button.addEventListener('click', function () {
@@ -814,8 +820,38 @@
           ask(question);
         });
         hotListEl.appendChild(button);
-      })(HOT_QUESTIONS[i]);
+      })(hotQuestions[i]);
     }
+    updateSendState();
+  }
+
+  /** 与首页共用顺序及内容；此接口只读取问题列表，不读取或生成业务答案缓存。 */
+  function loadHotQuestions() {
+    hotStatusEl.textContent = '正在加载热门问题…';
+    hotStatusEl.hidden = false;
+    hotRetryEl.hidden = true;
+    fetch(API + '/chat/hot-questions', { headers: { Accept: 'application/json' }, cache: 'no-store' })
+      .then(function (response) {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+      })
+      .then(function (body) {
+        if (!body || body.code !== 200 || !Array.isArray(body.data)) throw new Error('Invalid question list');
+        hotQuestions = body.data.filter(function (question) {
+          return typeof question === 'string' && question.trim();
+        }).map(function (question) {
+          return question.trim();
+        }).filter(function (question, index, list) {
+          return list.indexOf(question) === index;
+        });
+        renderHotQuestions();
+        hotStatusEl.textContent = '暂无热门问题，可直接输入问题。';
+        hotStatusEl.hidden = hotQuestions.length > 0;
+      })
+      .catch(function () {
+        hotStatusEl.textContent = '热门问题暂时无法加载，可直接输入问题。';
+        hotRetryEl.hidden = false;
+      });
   }
 
   function closeStream() {
@@ -879,12 +915,21 @@
     return answer;
   }
 
-  /** 打字机：按帧从 raw 里揭示字符，积压越多揭示越快 */
+  /** 与主页面一致：按经过时间限速揭示，整段到达时也不突然输出大量文字。 */
   function pump() {
     if (frameId) return;
-    frameId = window.requestAnimationFrame(function () {
+    typewriterLastTime = performance.now();
+    function tick(now) {
       frameId = 0;
       lastFrameAt = Date.now();
+      var elapsed = Math.min(80, Math.max(0, now - typewriterLastTime));
+      var steps = Math.floor(elapsed / 16);
+      if (!steps) {
+        frameId = window.requestAnimationFrame(tick);
+        return;
+      }
+      typewriterLastTime += steps * 16;
+      if (now - typewriterLastTime > 80) typewriterLastTime = now;
       var revealing = false;
       for (var i = 0; i < state.answers.length; i++) {
         var answer = state.answers[i];
@@ -895,21 +940,23 @@
         var grew = false;
         if (shown < target.length) {
           var backlog = target.length - shown;
-          shown = Math.min(target.length, shown + Math.max(1, Math.ceil(backlog / 18)));
+          var charsPerStep = backlog > 1200 ? 4 : backlog > 400 ? 2 : 1;
+          shown = Math.min(target.length, shown + charsPerStep * steps);
           grew = true;
-          revealing = true;
         }
         if (grew || shown !== answer.shown) {
           answer.shown = shown;
           renderAnswer(answer.body, target.slice(0, shown), true);
         }
         if (!grew && answer.done && answer.streaming) finalize(answer);
+        if (shown < target.length || (answer.done && answer.streaming)) revealing = true;
       }
       if (revealing) {
         scrollToEnd();
-        pump();
+        frameId = window.requestAnimationFrame(tick);
       }
-    });
+    }
+    frameId = window.requestAnimationFrame(tick);
   }
 
   /**
@@ -1232,7 +1279,8 @@
       });
   }
 
-  renderHotQuestions();
+  hotRetryEl.addEventListener('click', loadHotQuestions);
+  loadHotQuestions();
   updateSendState();
   loadScope();
   import('/api/v1/speech/assets/speech-input.js')

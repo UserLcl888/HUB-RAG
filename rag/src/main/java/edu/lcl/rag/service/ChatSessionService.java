@@ -18,6 +18,8 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -244,6 +246,8 @@ public class ChatSessionService {
     /** 混合轮只保存一次用户原话，各助手子回答分别保存 intent 和后端确定的会话状态。 */
     @Transactional
     public void saveTurn(String sessionId, String question, List<AssistantReply> replies) {
+        // 每轮携带一份当前状态，避免十轮历史窗口挤掉已选对象；不覆盖历史消息。
+        ConversationState active = ConversationState.latestBusinessContext(getHistory(sessionId));
         // 保存用户消息
         ChatMessage userMsg = new ChatMessage();
         userMsg.setSessionId(sessionId);
@@ -257,7 +261,19 @@ public class ChatSessionService {
             assistantMsg.setRole("ASSISTANT");
             assistantMsg.setContent(reply.answer());
             assistantMsg.setIntent(reply.intent());
-            assistantMsg.setConversationState(reply.conversationState());
+            ConversationState state = reply.conversationState();
+            if (state != null && state.context().isEmpty() && active != null
+                    && (state.kind() == edu.lcl.rag.assistant.IntentDecision.Kind.UNAVAILABLE
+                    || state.action() == edu.lcl.rag.assistant.IntentDecision.Action.CLARIFY
+                    || state.kind() == edu.lcl.rag.assistant.IntentDecision.Kind.ACKNOWLEDGEMENT)) {
+                Map<String, Object> preserved = new LinkedHashMap<>(active.context());
+                preserved.putIfAbsent("activeBusinessTool", active.toolId() == null ? "" : active.toolId());
+                state = new ConversationState(state.intent(), state.action(), state.kind(), state.query(),
+                        state.toolId(), state.arguments(), state.missingParameter(), state.clarification(),
+                        state.executionState(), preserved);
+            }
+            assistantMsg.setConversationState(state);
+            active = state != null && !state.context().isEmpty() ? state : null;
             assistantMsg.setSources(reply.intent() == Intent.RAG ? reply.sourcesJson() : "[]");
             assistantMsg.setLatencyMs(reply.latencyMs());
             messageRepository.save(assistantMsg);

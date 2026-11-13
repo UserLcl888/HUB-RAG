@@ -125,7 +125,7 @@ public class ConversationMemorySelector {
 
     public String clarification(String question) {
         if (features(question).aliases().contains("attendance")) {
-            return "你想了解考勤制度，还是分析实际打卡记录或缺勤人员？请说明具体要看哪一部分。";
+            return "你想了解考勤制度，还是查询考勤组配置和成员？请说明具体要看哪一部分。";
         }
         return "我还不能确定这次具体想问什么，请补充咨询内容，或说明要继续前面的哪一个问题。";
     }

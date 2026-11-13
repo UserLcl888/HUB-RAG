@@ -1,121 +1,252 @@
+# Spring 基础配置。
 spring:
+  # 应用标识。
   application:
+    # 应用名称。
     name: rag
 
+  # 默认 RAG 数据源：保存知识库、文档、向量和聊天历史，可正常读写。
   datasource:
+    # 原 RAG PostgreSQL 连接地址，不用于查询实际业务记录。
     url: jdbc:postgresql://47.110.140.13:5432/rag
+    # 数据库登录账号。
     username: postgres
+    # 数据库登录密码；包含真实凭据的配置及 JAR 不要公开分发。
     password: java123
+    # PostgreSQL JDBC 驱动。
     driver-class-name: org.postgresql.Driver
+    # 原 RAG 数据库的 Hikari 连接池。
     hikari:
+      # 最大连接数。
       maximum-pool-size: 20
+      # 最小空闲连接数。
       minimum-idle: 5
+      # 等待获取连接的超时，单位毫秒。
       connection-timeout: 30000
 
+  # JPA 配置仅用于默认 RAG 数据源，不接管业务库。
   jpa:
     hibernate:
+      # 不自动创建或修改表结构。
       ddl-auto: none
+    # 是否输出 Hibernate 执行的 SQL。
     show-sql: true
     properties:
       hibernate:
+        # 数据库 SQL 方言。
         dialect: org.hibernate.dialect.PostgreSQLDialect
+        # 是否格式化输出的 SQL。
         format_sql: true
 
+  # Spring Data 连接配置。
   data:
+    # Redis 用于热门问题答案、向量等缓存，不是业务数据库。
     redis:
+      # Redis 服务地址。
       host: 127.0.0.1
+      # Redis 服务端口。
       port: 6379
+      # Redis 逻辑库编号。
       database: 10
+      # Lettuce 客户端连接池参数，需连接池依赖支持。
       lettuce:
         pool:
+          # 最大连接数。
           max-active: 16
+          # 最大空闲连接数。
           max-idle: 8
+          # 最小空闲连接数。
           min-idle: 2
+      # Redis 访问密码。
       password: java
 
+  # Spring 自动配置的任务执行器参数；文档索引使用 AsyncConfig 的独立线程池，
+  # 此处不是 indexTaskExecutor 的配置入口，自定义执行器存在时自动配置可能退让。
   task:
     execution:
       pool:
+        # 核心线程数。
         core-size: 4
+        # 最大线程数。
         max-size: 8
+        # 等待执行的任务队列容量。
         queue-capacity: 100
+      # 自动配置执行器的线程名称前缀。
       thread-name-prefix: "index-task-"
 
+  # HTTP 文件上传限制。
   servlet:
     multipart:
+      # 单个上传文件的最大大小。
       max-file-size: 50MB
+      # 一次请求中所有上传内容的最大总大小。
       max-request-size: 100MB
 
+  # Spring AI：通过 OpenAI 兼容协议调用通义千问。
   ai:
     openai:
+      # 对话 API 地址，可通过 DASHSCOPE_BASE_URL 覆盖。
       base-url: ${DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+      # 对话模型 API 密钥。
       api-key: sk-afa044516e6648c1a2fc78c577f6ec71
       chat:
         options:
+          # 默认对话模型，可通过 CHAT_MODEL 覆盖。
           model: ${CHAT_MODEL:qwen-plus}
+          # 默认回答温度；意图分类在代码中单独使用 0，不受此处影响。
           temperature: 0.3
+          # 单次生成的最大输出 Token 数，具体调用可单独覆盖。
           max-tokens: 4096
+      # 文本向量化接口，用于资料入库和检索。
       embedding:
+        # 向量 API 地址，可通过 DASHSCOPE_EMBEDDING_BASE_URL 覆盖。
         base-url: ${DASHSCOPE_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+        # 向量模型 API 密钥。
         api-key: sk-afa044516e6648c1a2fc78c577f6ec71
         options:
+          # 文本向量模型；更换后通常需要重新生成已有文档向量。
           model: text-embedding-v3
 
+  # Spring Cache 配置，例如 HyDE 查询改写缓存。
   cache:
+    # 缓存实现使用 Redis。
     type: redis
     redis:
+      # Spring Cache 默认过期时间，单位毫秒；不控制下方自定义缓存 TTL。
       time-to-live: 600000
+      # 不缓存 null 返回值。
       cache-null-values: false
 
+# 文档原文件的对象存储。
 minio:
+  # MinIO 服务地址。
   endpoint: http://103.236.54.34:9000
+  # MinIO 访问账号。
   access-key: vFOY2dajnJttpVH9GMBh
+  # MinIO 访问密钥。
   secret-key: 3bgYXXkM2u3koZTlLLcc23YnOuge3vlqqeJZ8OPu
+  # 上传资料存储桶。
   bucket: rag-documents
 
+# 检索结果精排服务。
 reranker:
+  # 精排 API 地址，可通过 RERANKER_ENDPOINT 覆盖。
   endpoint: ${RERANKER_ENDPOINT:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}
+  # 精排 API 密钥。
   api-key: sk-afa044516e6648c1a2fc78c577f6ec71
+  # 精排模型名称。
   model: gte-rerank-v2
+  # 精排请求超时，单位毫秒。
   timeout-ms: 3000
+  # 精排服务默认返回数量，部分调用会显式指定其他数量。
   top-n: 5
 
+# 独立业务数据源：只读，不参与原 RAG 库的 JPA、表结构初始化或迁移。
+# 连接信息统一保存在此处，仍支持环境变量覆盖。
+business:
+  datasource:
+    # 是否注册业务数据源；false 时不创建相关查询组件。
+    enabled: ${BUSINESS_DB_ENABLED:true}
+    # 实际业务库地址；在 farmland、public 模式中解析未限定表名。
+    url: ${BUSINESS_DB_URL:jdbc:postgresql://58.48.247.18:54321/farmland_hb?currentSchema=farmland,public}
+    # 业务库账号，可通过 BUSINESS_DB_USERNAME 覆盖。
+    username: ${BUSINESS_DB_USERNAME:postgres}
+    # 业务库密码，可通过 BUSINESS_DB_PASSWORD 覆盖，默认随 JAR 打包。
+    password: ${BUSINESS_DB_PASSWORD:1234@Bacd}
+    # 独立业务库的 Hikari 参数，由 BusinessDataSourceConfig 显式应用。
+    # 连接池首次使用才启动；只读限制在 Java 配置中强制设置。
+    hikari:
+      # 连接池启动后维持的最小空闲连接数。
+      min-idle: 1
+      # 最大连接数，限制业务查询对数据库的占用。
+      max-pool-size: 5
+      # 获取连接时按 Hikari 的校验策略检测连接有效性。
+      connection-test-query: SELECT 1
+      # 等待获取连接的超时，单位毫秒。
+      connection-timeout: 5000
+    # 业务查询和只读事务超时，单位秒；服务端语句超时也使用此值。
+    query-timeout-seconds: 10
+  # 当前会话的业务查询状态与结果复用，保存在聊天消息原有的 conversation_state JSONB 字段。
+  conversation:
+    # 当前会话查询快照复用有效期，单位秒；不使用 Redis。刷新、改条件或默认日期跨天会重新查询。
+    snapshot-ttl-seconds: 300
+  # 第一个业务工具：项目及标段查询。组织实施阶段和 del_flag=0 在后端强制执行，不能在此取消。
+  project-query:
+    # 项目、标段默认超过 3 条先返回总数和最多 3 个示例；用户可指定全部或前 N 条，无分页参数。
+    # 简称/漏字名称的相似候选最低得分，范围 (0,1]；模糊结果仍需用户确认。
+    fuzzy-min-score: 0.55
+
+# 文档问答配置，不用于选择业务数据库。
 rag:
+  # 会话检索范围与首页热门问题。
   chat:
+    # 是否必须选择单份文档才能做文档问答；false 允许按知识库检索。
     require-document-scope: false
+    # 是否在未指定文档时自动绑定已解析文档；false 保持知识库范围。
     auto-bind-document: false
+    # 首页第一行的业务快捷问题：点击后正常分流查询，不参与 Redis 答案缓存和缓存预热。
+    business-hot-questions:
+      - "展示2026年正在施工的项目信息"
+      - "分析东荆农场项目的考勤组信息"
+    # 资料问答热门问题：排在业务问题之后；只有此清单允许使用资料答案缓存及预热。
     hot-questions:
       - "建设规划布局要做到什么程度?"
       - "施工组织设计怎么做?"
       - "什么是田块整治工程？"
       - "如何进行项目工程设计?"
+  # 父子分块大小，单位字符；影响新解析或重新解析的资料。
   chunk:
+    # 子块最大字符数，主要用于检索命中。
     max-child-characters: 1200
+    # 父块最大字符数，主要用于还原完整上下文。
     max-parent-characters: 3000
+  # 检索、精排及上下文候选数量。
   retrieval:
+    # 向量检索召回数量。
     vector-top-k: 20
+    # 全文检索召回数量。
     fulltext-top-k: 20
+    # 最终上下文最多保留的父块数量。
     return-top-n: 5
+    # 子块精排后保留的候选数量。
     child-rerank-top-n: 15
+    # 精排分数过滤阈值；未精排时不使用该阈值，当前仍有最高分兜底。
     min-score: 0.5
+  # 文档参考内容的 Token 预算，不是模型最大输出长度。
   context:
+    # 拼接参考资料时使用的上下文预算。
     max-tokens: 9000
+  # 自定义 Redis 缓存过期时间，支持 d（天）、m（分钟）等单位。
   cache:
+    # 文本向量缓存有效期。
     embedding-ttl: 7d
+    # 预留查询缓存有效期，当前代码未读取；HyDE 使用 spring.cache.redis 配置。
     query-ttl: 10m
+    # 首页热门问题答案有效期；普通问题及带历史上下文的问题不使用答案缓存。
     answer-ttl: 7d
 
+# 语音识别配置，与文字对话模型相互独立。
 speech:
+  # 依次优先使用 ASR_API_KEY、DASHSCOPE_API_KEY、文字模型 API 密钥。
   api-key: ${ASR_API_KEY:${DASHSCOPE_API_KEY:${spring.ai.openai.api-key:}}}
+  # 语音服务工作空间标识，用于构造 WebSocket 地址。
   workspace-id: ${ASR_WORKSPACE_ID:ws-o5sb44ika8bh4ajq}
+  # 语音识别模型名称。
   model: qwen-audio-3.1-asr-flash-message
-  allowed-origins: ${ASR_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
+  # 允许建立语音 WebSocket 连接的网页来源，多个值用逗号分隔。
+  allowed-origins: ${ASR_ALLOWED_ORIGINS:https://47.110.140.13,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
+  # 当前服务实例允许的语音并发连接总数。
   max-concurrent: 5
+  # 单个 IP 允许的语音并发连接数。
   max-per-ip: 2
 
+# 日志级别及输出格式。
 logging:
   level:
+    # 应用代码日志级别。
     edu.lcl.rag: INFO
+    # Spring AI 日志级别。
     org.springframework.ai: WARN
   pattern:
+    # 控制台日志：时间、线程、级别、类名和消息。
     console: "%d{HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

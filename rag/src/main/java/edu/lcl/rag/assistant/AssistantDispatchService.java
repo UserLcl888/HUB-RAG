@@ -73,12 +73,16 @@ public class AssistantDispatchService {
             if (!send(emitter, "status", Map.of("type", "BUSINESS_QUERY", "message", "正在处理业务查询…"))) {
                 return;
             }
-            var result = businessQueries.answer(decision, history);
+            var result = businessQueries.answer(decision, history, token -> {
+                if (gone.get() || !send(emitter, "token", token)) gone.set(true);
+            }, gone::get);
             answer = result.text();
             state = ConversationState.from(decision, result);
             if (result.state() == BusinessQueryTool.State.NEEDS_CLARIFICATION) {
                 action = IntentDecision.Action.CLARIFY;
             }
+            finishReply(question, sessionId, decision.intent(), answer, emitter, gone, start, action, state);
+            return;
         } else {
             answer = otherAnswers.answer(decision, answerHistory(decision, history, sessionId));
         }
@@ -129,8 +133,7 @@ public class AssistantDispatchService {
     private void streamMixed(String question, IntentPlan plan, List<Long> kbIds, Long docId, String sessionId,
                              List<ChatMessage> history, SseEmitter emitter, AtomicBoolean gone,
                              long start) throws Exception {
-        // 先计算缺少的条件/未接入提示，文档完成后再作为独立段落展示，不能用文档内容补假数据。
-        var business = businessQueries.answer(plan.tasks().getLast(), history);
+        // 文档段结束后再流式组织业务段，保持两段顺序，业务事实不从文档推断。
         if (!send(emitter, "token", "【文档解答】\n")) {
             return;
         }
@@ -141,10 +144,14 @@ public class AssistantDispatchService {
                 if (!finishing.compareAndSet(false, true)) {
                     return;
                 }
-                String businessText = "【业务查询】\n" + business.text();
-                if (gone.get() || !send(emitter, "token", "\n\n" + businessText)) {
+                if (gone.get() || !send(emitter, "token", "\n\n【业务查询】\n")) {
                     return;
                 }
+                var business = businessQueries.answer(plan.tasks().getLast(), history, token -> {
+                    if (gone.get() || !send(emitter, "token", token)) gone.set(true);
+                }, gone::get);
+                if (gone.get()) return;
+                String businessText = "【业务查询】\n" + business.text();
                 int elapsed = (int) (System.currentTimeMillis() - start);
                 saveMixed(sessionId, question, "【文档解答】\n" + documentAnswer.getAnswer(),
                         documentAnswer.getSources(), businessText, elapsed,
@@ -242,6 +249,14 @@ public class AssistantDispatchService {
         if (gone.get() || !send(emitter, "token", answer)) {
             return;
         }
+        finishReply(question, sessionId, intent, answer, emitter, gone, start, action, state);
+    }
+
+    /** 业务回答已经逐片段发送，此处只落库和发送 done，不能再重发整段正文。 */
+    private void finishReply(String question, String sessionId, Intent intent, String answer,
+                             SseEmitter emitter, AtomicBoolean gone, long start,
+                             IntentDecision.Action action, ConversationState state) {
+        if (gone.get()) return;
         int elapsed = (int) (System.currentTimeMillis() - start);
         saveReply(sessionId, question, answer, elapsed, intent, state);
         send(emitter, "done", Map.of("sources", List.of(), "latencyMs", elapsed,

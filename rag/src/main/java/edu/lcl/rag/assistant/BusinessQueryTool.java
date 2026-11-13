@@ -15,6 +15,16 @@ public interface BusinessQueryTool {
 
     Result query(String question, Map<String, String> arguments, List<ChatMessage> history);
 
+    /** 仅允许具体适配器确认短回复可依据服务端保存的真实候选继续，默认不放宽一致性校验。 */
+    default boolean supportsContextReply(String question, Map<String, String> arguments, List<ChatMessage> history) {
+        return false;
+    }
+
+    /** 模型可见的上下文投影；完整服务端状态仍按原样保存，不默认暴露成员单位/岗位等明细。 */
+    default Map<String, Object> modelContext(Map<String, Object> context) {
+        return context;
+    }
+
     record Definition(String id, String name, String description,
                       List<String> examples, List<Parameter> parameters, boolean available) {}
 
@@ -23,10 +33,23 @@ public interface BusinessQueryTool {
 
     enum State { SUCCESS, NEEDS_CLARIFICATION, NOT_CONNECTED, FAILED }
 
-    /** missingParameter 使用目录中的参数名，不能从回答文字猜测；只有 SUCCESS 可包含真实查询结果。 */
-    record Result(State state, String text, String missingParameter) {
+    /**
+     * missingParameter 使用目录中的参数名。追问可附带真实候选，但不能把候选说成已确认目标。
+     * resolvedArguments 保存后端应用的默认条件；context 保存候选/选择等结构化状态，仅存当前会话。
+     */
+    record Result(State state, String text, String missingParameter,
+                  Map<String, String> resolvedArguments, Map<String, Object> context) {
+        public Result {
+            resolvedArguments = resolvedArguments == null ? Map.of() : Map.copyOf(resolvedArguments);
+            context = context == null ? Map.of() : Map.copyOf(context);
+        }
+
         public Result(State state, String text) {
-            this(state, text, null);
+            this(state, text, null, Map.of(), Map.of());
+        }
+
+        public Result(State state, String text, String missingParameter) {
+            this(state, text, missingParameter, Map.of(), Map.of());
         }
     }
 }

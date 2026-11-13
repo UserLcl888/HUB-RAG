@@ -26,6 +26,7 @@ import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import jakarta.annotation.PreDestroy;
+import jakarta.servlet.http.HttpServletResponse;
 
 @RestController
 @RequestMapping("/api/v1/chat")
@@ -61,9 +62,13 @@ public class ChatController {
             @RequestParam String question,
             @RequestParam(required = false) List<Long> kbIds,
             @RequestParam(required = false) Long docId,
-            @RequestParam(required = false) String sessionId) {
+            @RequestParam(required = false) String sessionId,
+            HttpServletResponse response) {
 
         String text = validateQuestion(question);
+        // 禁用代理缓冲/转换，避免增量事件被攒成整段后才到达浏览器。
+        response.setHeader("Cache-Control", "no-cache, no-transform");
+        response.setHeader("X-Accel-Buffering", "no");
         // 分类前只检查文字和会话。首次非 RAG 访问不能绑定请求附带的文档范围。
         String sid = sessionService.getOrCreateSession(sessionId, List.of(), null);
 
@@ -128,10 +133,10 @@ public class ChatController {
         return ApiResponse.ok(businessQueries.definitions());
     }
 
-    /** 前端从这里读取首页名单，与预热及答案缓存白名单保持一致。 */
+    /** 首页展示业务快捷问题及资料问题；答案缓存与预热仍只允许资料问题名单。 */
     @GetMapping("/hot-questions")
     public ApiResponse<List<String>> hotQuestions() {
-        return ApiResponse.ok(hotQuestions.questions());
+        return ApiResponse.ok(hotQuestions.displayQuestions());
     }
 
     private String validateQuestion(String question) {
@@ -161,7 +166,7 @@ public class ChatController {
         List<String> questions = (request != null && request.questions() != null && !request.questions().isEmpty())
                 ? request.questions() : hotQuestions.questions();
         if (questions.stream().anyMatch(question -> !hotQuestions.contains(question))) {
-            throw new IllegalArgumentException("只能预热首页热门问题名单中的问题");
+            throw new IllegalArgumentException("只能预热热门资料问题，业务查询问题不参与答案缓存");
         }
         questions = questions.stream().distinct().toList();
 
